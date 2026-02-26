@@ -1,0 +1,34 @@
+
+Rahul Sharma
+Email: rahul.sharma@gmail.com
+Phone: +91 9876543210
+Gender: Male
+DOB: 12/08/1995
+Current Address: 45 MG Road, Bengaluru
+Permanent Address: 89 Residency Road, Bengaluru
+City: Bengaluru
+Pincode: 560001
+Preferred Location: Bengaluru, Hyderabad
+Willing to Relocate: Yes
+Notice Period: 30 days
+Current CTC: 12 LPA
+Expected CTC: 16 LPA
+
+Professional Summary:
+Senior SAP ABAP Developer with 7 years of experience in ERP implementations.
+
+Work Experience
+TechNova Solutions Pvt Ltd
+Senior SAP ABAP Developer
+Jan 2021 - Present
+Project: S/4HANA Migration
+Skills: ABAP, ALV, BAPI, SmartForms
+
+Education
+B.Tech - VTU University - 2017 - CGPA 8.2
+
+Certifications
+SAP Certified Development Associate Credential ID: SAP-12345 https://example.com/cert
+
+Skills
+ABAP, ALV, BAPI, SmartForms, SAP Script

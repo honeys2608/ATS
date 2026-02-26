@@ -1,0 +1,48 @@
+.email-editor {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.email-subject {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-bottom: 1px solid #eee;
+  font-size: 15px;
+  outline: none;
+}
+
+.ql-toolbar {
+  border: none !important;
+  border-bottom: 1px solid #eee !important;
+}
+
+.ql-container {
+  border: none !important;
+  min-height: 180px;
+}
+
+.attachments {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border-top: 1px solid #eee;
+}
+
+.attach-btn {
+  background: #f1f5f9;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.attachment-chip {
+  background: #e0f2fe;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}

@@ -1,0 +1,323 @@
+/* Interview Management Styles */
+
+.interview-management {
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+}
+
+.interview-management .interview-card {
+  border-left: 4px solid;
+  transition: all 0.3s ease;
+}
+
+.interview-management .interview-card:hover {
+  transform: translateX(4px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+.interview-management .status-badge {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.interview-management .status-scheduled {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.interview-management .status-in_progress {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.interview-management .status-completed {
+  background-color: #dcfce7;
+  color: #15803d;
+}
+
+.interview-management .status-cancelled {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.interview-management .interview-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.interview-management .interview-table thead {
+  background-color: #f3f4f6;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.interview-management .interview-table th {
+  padding: 16px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.interview-management .interview-table td {
+  padding: 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.interview-management .interview-table tbody tr:hover {
+  background-color: #f9fafb;
+}
+
+.interview-management .action-button {
+  padding: 8px 12px;
+  margin: 0 4px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.interview-management .action-button.primary {
+  background-color: #3b82f6;
+  color: white;
+}
+
+.interview-management .action-button.primary:hover {
+  background-color: #2563eb;
+}
+
+.interview-management .action-button.danger {
+  background-color: #ef4444;
+  color: white;
+}
+
+.interview-management .action-button.danger:hover {
+  background-color: #dc2626;
+}
+
+.interview-management .action-button.success {
+  background-color: #10b981;
+  color: white;
+}
+
+.interview-management .action-button.success:hover {
+  background-color: #059669;
+}
+
+/* Modal Styles */
+.interview-modal {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.interview-modal-content {
+  background-color: white;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+  max-width: 500px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.interview-modal-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 24px;
+  display: flex;
+  justify-between;
+  align-items: center;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.interview-modal-body {
+  padding: 24px;
+}
+
+.interview-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.interview-form-group {
+  margin-bottom: 16px;
+}
+
+.interview-form-group label {
+  display: block;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.interview-form-group input,
+.interview-form-group select,
+.interview-form-group textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.2s ease;
+}
+
+.interview-form-group input:focus,
+.interview-form-group select:focus,
+.interview-form-group textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.interview-form-group textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+/* Interview Type Icons */
+.interview-type-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.interview-type-icon.ai-chat {
+  background-color: #dbeafe;
+}
+
+.interview-type-icon.video {
+  background-color: #fce7f3;
+}
+
+.interview-type-icon.in-person {
+  background-color: #e0e7ff;
+}
+
+/* Statistics Card */
+.interview-stat-card {
+  background: white;
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+.interview-stat-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.interview-stat-card .stat-number {
+  font-size: 28px;
+  font-weight: bold;
+  color: #3b82f6;
+  margin: 8px 0;
+}
+
+.interview-stat-card .stat-label {
+  font-size: 12px;
+  color: #6b7280;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* Loading & Empty States */
+.interview-empty-state {
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.interview-empty-state svg {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 16px;
+  color: #d1d5db;
+}
+
+.interview-empty-state h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.interview-empty-state p {
+  color: #6b7280;
+  margin-bottom: 24px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .interview-management .interview-table {
+    font-size: 12px;
+  }
+
+  .interview-management .interview-table th,
+  .interview-management .interview-table td {
+    padding: 12px 8px;
+  }
+
+  .interview-modal-content {
+    width: 95%;
+    max-height: 95vh;
+  }
+
+  .interview-type-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+  }
+}
+
+/* Animations */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.interview-management {
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.interview-loading {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}

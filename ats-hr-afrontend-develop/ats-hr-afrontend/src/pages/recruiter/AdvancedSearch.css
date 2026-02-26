@@ -1,0 +1,123 @@
+.semantic-search-page {
+  width: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: #f9fafb;
+}
+
+.semantic-search-page__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 30px;
+  background-color: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.semantic-search-page__title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #111827;
+}
+
+.semantic-search-page__subtitle {
+  margin: 4px 0 0;
+  font-size: 15px;
+  color: #6b7280;
+}
+
+.semantic-search-page__header-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.semantic-search-refresh {
+  padding: 10px 20px;
+  background-color: #3182ce;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background-color 0.2s ease;
+}
+
+.semantic-search-refresh:hover {
+  background-color: #2b6cb0;
+}
+
+.semantic-search-page__content {
+  display: flex;
+  gap: 24px;
+  padding: 24px 30px 30px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.semantic-search-page__context {
+  margin: 14px 30px 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background-color: #eef6ff;
+  color: #1e3a5f;
+  border: 1px solid #d8e8ff;
+  font-size: 0.92rem;
+}
+
+.semantic-search-page__context--ai {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #065f46;
+}
+
+.semantic-search-page__context-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: #059669;
+  color: #fff;
+  border-radius: 999px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.semantic-search-page__context-text {
+  flex: 1;
+}
+
+.semantic-search-page__context-score {
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .semantic-search-page__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .semantic-search-page__context {
+    margin: 12px 16px 0;
+  }
+
+  .semantic-search-page__context--ai {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .semantic-search-page__content {
+    flex-direction: column;
+    gap: 16px;
+    padding: 16px;
+  }
+}

@@ -1,0 +1,37 @@
+# Resume Parser Dependencies
+# Add these to your main requirements.txt
+
+# PDF Processing
+pdfplumber>=0.10.0
+PyPDF2>=3.0.0
+
+# DOCX Processing
+python-docx>=0.8.11
+
+# OCR (for scanned/image-based PDFs)
+pdf2image>=1.17.0
+pytesseract>=0.3.10
+Pillow>=10.0.0
+
+# NLP and Text Processing
+spacy>=3.5.0
+python-dateutil>=2.8.2
+
+# FastAPI and Web
+fastapi>=0.104.0
+python-multipart>=0.0.6
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Optional: Advanced NER
+transformers>=4.30.0  # For BERT-based NER (optional)
+torch>=2.0.0  # For transformers (optional)
+
+# Optional: Antiword for DOC files
+# Install separately: apt-get install antiword (Linux) or brew install antiword (Mac)
+
+# OCR system binaries required for scanned PDFs:
+# - Tesseract OCR executable
+# - Poppler utils (for pdf2image conversion)
