@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.auth import get_current_user
 from app.db import get_db
+from app.utils.user_agent import parse_user_agent
 
 router = APIRouter(prefix="/v1/audit-logs", tags=["Audit Logs"])
 
@@ -18,37 +19,6 @@ TEAM_VIEW_ROLES = {"super_admin", "admin", "account_manager", "recruiter", "clie
 
 def _normalize_role(role: Optional[str]) -> str:
     return str(role or "").strip().lower()
-
-
-def _parse_ua_summary(user_agent: Optional[str]) -> dict:
-    ua = str(user_agent or "").lower().strip()
-    if not ua:
-        return {"device": None, "browser": None, "os": None}
-
-    os_name = None
-    if "windows nt" in ua:
-        os_name = "Windows"
-    elif "mac os x" in ua or "macintosh" in ua:
-        os_name = "macOS"
-    elif "android" in ua:
-        os_name = "Android"
-    elif "iphone" in ua or "ipad" in ua:
-        os_name = "iOS"
-    elif "linux" in ua:
-        os_name = "Linux"
-
-    browser = None
-    if "edg/" in ua:
-        browser = "Edge"
-    elif "chrome/" in ua:
-        browser = "Chrome"
-    elif "firefox/" in ua:
-        browser = "Firefox"
-    elif "safari/" in ua and "chrome/" not in ua:
-        browser = "Safari"
-
-    device = "Mobile" if any(k in ua for k in ("android", "iphone", "ipad")) else "Desktop"
-    return {"device": device, "browser": browser, "os": os_name}
 
 
 def _current_user_id(user: dict) -> Optional[str]:
@@ -105,7 +75,7 @@ def _serialize_logs(db: Session, rows: list[models.AuditLog]) -> list[dict]:
     for row in rows:
         actor_id = row.actor_id or row.user_id
         actor_user = users.get(actor_id)
-        ua_parts = _parse_ua_summary(row.user_agent)
+        ua_parts = parse_user_agent(row.user_agent)
         items.append(
             {
                 "id": row.id,

@@ -44,6 +44,17 @@ SECTION_MODEL = {
     "cp_invoices": models.TrackerCPInvoice,
 }
 
+SUBMISSION_STATUS_GROUPS = {
+    "total": None,
+    "shortlisted": SHORTLISTED,
+    "interviews": INTERVIEWS,
+    "selected": SELECTED,
+    "joined": {"Joined"},
+    "rejected": REJECTED,
+    "duplicates": {"Duplicate"},
+    "on_hold": {"Req on Hold"},
+}
+
 
 def _must_access(user: Dict[str, Any]) -> None:
     role = str((user or {}).get("role") or "").strip().lower()
@@ -136,6 +147,22 @@ def _distinct_non_empty(db: Session, model: Any, column_name: str) -> List[str]:
 
 def _norm_status(value: Any) -> str:
     return str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _status_group_values(group: Optional[str]) -> Optional[set[str]]:
+    if not group:
+        return None
+    key = _norm_status(group)
+    return SUBMISSION_STATUS_GROUPS.get(key)
+
+
+def _period_bounds(period: str, date_from: Optional[str], date_to: Optional[str]) -> Tuple[date, date]:
+    start, end, _, _ = _window(period, date_from, date_to)
+    return start, end
+
+
+def _is_paid_status(value: Any) -> bool:
+    return _norm_status(value) in {"paid", "settled", "completed"}
 
 
 def _has_tracker_submissions(db: Session) -> bool:
@@ -813,15 +840,34 @@ def _paged(model: Any, page: int, limit: int, search: Optional[str], sort_by: st
 
 
 @router.get("/submissions")
-def submissions_table(page: int = Query(1, ge=1), limit: int = Query(25, ge=1, le=500), search: Optional[str] = Query(None), client: Optional[str] = Query(None), am: Optional[str] = Query(None), recruiter: Optional[str] = Query(None), status: Optional[str] = Query(None), sort_by: str = Query("submission_date"), sort_dir: str = Query("desc"), db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def submissions_table(
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=500),
+    search: Optional[str] = Query(None),
+    period: str = Query("month"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    client: Optional[str] = Query(None),
+    am: Optional[str] = Query(None),
+    recruiter: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    status_group: Optional[str] = Query(None),
+    sort_by: str = Query("submission_date"),
+    sort_dir: str = Query("desc"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     _must_access(current_user)
+    status_values = _status_group_values(status_group)
+    start, end = _period_bounds(period, date_from, date_to)
     if not _has_tracker_submissions(db):
-        s, e = date(1970, 1, 1), datetime.utcnow().date()
-        rows = _portal_submission_rows(db, s, e, client=client, am=am, recruiter=recruiter)
+        rows = _portal_submission_rows(db, start, end, client=client, am=am, recruiter=recruiter)
         items = []
         for app, job, candidate, am_full, am_user, am_email, rec_full, rec_user, rec_email in rows:
             st = str(app.status or "")
             if status and _norm_status(st) != _norm_status(status):
+                continue
+            if status_values is not None and st not in status_values:
                 continue
             raw_skills = app.skills
             if (not raw_skills) and candidate is not None:
@@ -879,45 +925,141 @@ def submissions_table(page: int = Query(1, ge=1), limit: int = Query(25, ge=1, l
     if am: f.append(func.lower(models.TrackerSubmission.am_name) == am.strip().lower())
     if recruiter: f.append(func.lower(models.TrackerSubmission.recruiter_name) == recruiter.strip().lower())
     if status: f.append(func.lower(models.TrackerSubmission.status) == status.strip().lower())
+    if status_values is not None: f.append(models.TrackerSubmission.status.in_(list(status_values)))
+    f.append(models.TrackerSubmission.submission_date >= start)
+    f.append(models.TrackerSubmission.submission_date <= end)
     return _paged(models.TrackerSubmission, page, limit, search, sort_by, sort_dir, f, db, ["id","serial_no","submission_date","client_name","requirement_no","am_name","recruiter_name","candidate_name","skill","total_experience","current_location","notice_period","status","remarks"])
 
 
 @router.get("/selections")
-def selections_table(page: int = Query(1, ge=1), limit: int = Query(25, ge=1, le=500), search: Optional[str] = Query(None), client: Optional[str] = Query(None), am: Optional[str] = Query(None), recruiter: Optional[str] = Query(None), status: Optional[str] = Query(None), sort_by: str = Query("date_of_joining"), sort_dir: str = Query("desc"), db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def selections_table(
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=500),
+    search: Optional[str] = Query(None),
+    period: str = Query("month"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    client: Optional[str] = Query(None),
+    am: Optional[str] = Query(None),
+    recruiter: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    bgv_pending: Optional[bool] = Query(None),
+    sort_by: str = Query("date_of_joining"),
+    sort_dir: str = Query("desc"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     _must_access(current_user)
+    start, end = _period_bounds(period, date_from, date_to)
     f = []
     if client: f.append(func.lower(models.TrackerSelection.client_name) == client.strip().lower())
     if am: f.append(func.lower(models.TrackerSelection.am_name) == am.strip().lower())
     if recruiter: f.append(func.lower(models.TrackerSelection.recruiter_name) == recruiter.strip().lower())
     if status: f.append(func.lower(models.TrackerSelection.status) == status.strip().lower())
+    if bgv_pending:
+        f.append(func.lower(func.coalesce(models.TrackerSelection.status, "")) == "joined")
+        f.append(models.TrackerSelection.bgv_final_dt.is_(None))
+    f.append(models.TrackerSelection.date_of_joining >= start)
+    f.append(models.TrackerSelection.date_of_joining <= end)
     return _paged(models.TrackerSelection, page, limit, search, sort_by, sort_dir, f, db, ["id","client_name","am_name","recruiter_name","candidate_name","skill_set","date_of_joining","billing_per_day","ctc_per_month","gp_value","gp_percent","status","bgv_with","bgv_type","bgv_initiated_dt","bgv_interim_dt","bgv_final_dt","po_no"])
 
 
 @router.get("/channel-partners")
-def channel_partners_table(page: int = Query(1, ge=1), limit: int = Query(25, ge=1, le=500), search: Optional[str] = Query(None), status: Optional[str] = Query(None), sort_by: str = Query("date_of_joining"), sort_dir: str = Query("desc"), db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def channel_partners_table(
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=500),
+    search: Optional[str] = Query(None),
+    period: str = Query("month"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    sort_by: str = Query("date_of_joining"),
+    sort_dir: str = Query("desc"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     _must_access(current_user)
+    start, end = _period_bounds(period, date_from, date_to)
     f = [func.lower(models.TrackerChannelPartner.status) == status.strip().lower()] if status else []
-    return _paged(models.TrackerChannelPartner, page, limit, search, sort_by, sort_dir, f, db, ["id","cp_name","candidate_name","skill_set","date_of_joining","cp_billing","routing_fee","infy_billing","status","bgv_with","po_no"])
+    f.append(models.TrackerChannelPartner.date_of_joining >= start)
+    f.append(models.TrackerChannelPartner.date_of_joining <= end)
+    result = _paged(models.TrackerChannelPartner, page, limit, search, sort_by, sort_dir, f, db, ["id","cp_name","candidate_name","skill_set","date_of_joining","cp_billing","routing_fee","infy_billing","status","bgv_with","po_no"])
+    for item in result["items"]:
+        cp_billing = float(item.get("cp_billing") or 0)
+        routing_fee = float(item.get("routing_fee") or 0)
+        infy_billing = float(item.get("infy_billing") or 0)
+        item["margin"] = round(infy_billing - cp_billing - routing_fee, 2)
+    return result
 
 
 @router.get("/client-invoices")
-def client_invoices_table(page: int = Query(1, ge=1), limit: int = Query(25, ge=1, le=500), search: Optional[str] = Query(None), client: Optional[str] = Query(None), status: Optional[str] = Query(None), month: Optional[str] = Query(None), sort_by: str = Query("invoice_date"), sort_dir: str = Query("desc"), db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def client_invoices_table(
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=500),
+    search: Optional[str] = Query(None),
+    period: str = Query("month"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    client: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    month: Optional[str] = Query(None),
+    sort_by: str = Query("invoice_date"),
+    sort_dir: str = Query("desc"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     _must_access(current_user)
+    start, end = _period_bounds(period, date_from, date_to)
     f = []
     if client: f.append(func.lower(models.TrackerClientInvoice.client_name) == client.strip().lower())
     if status: f.append(func.lower(models.TrackerClientInvoice.status) == status.strip().lower())
     if month: f.append(func.lower(models.TrackerClientInvoice.service_month) == month.strip().lower())
-    return _paged(models.TrackerClientInvoice, page, limit, search, sort_by, sort_dir, f, db, ["id","client_name","candidate_name","service_month","po_no","invoice_no","invoice_date","invoice_value","gst_amount","total_inv_value","status","payment_date"])
+    f.append(models.TrackerClientInvoice.invoice_date >= start)
+    f.append(models.TrackerClientInvoice.invoice_date <= end)
+    result = _paged(models.TrackerClientInvoice, page, limit, search, sort_by, sort_dir, f, db, ["id","client_name","candidate_name","service_month","po_no","invoice_no","invoice_date","invoice_value","gst_amount","total_inv_value","status","payment_date"])
+    today = datetime.utcnow().date()
+    for item in result["items"]:
+        inv_date = _to_date(item.get("invoice_date"))
+        status_raw = item.get("status")
+        is_overdue = bool(inv_date and (inv_date + timedelta(days=30) < today) and not _is_paid_status(status_raw))
+        item["status_display"] = "Overdue" if is_overdue else (status_raw or "Pending")
+    return result
 
 
 @router.get("/cp-invoices")
-def cp_invoices_table(page: int = Query(1, ge=1), limit: int = Query(25, ge=1, le=500), search: Optional[str] = Query(None), cp_name: Optional[str] = Query(None), payment_status: Optional[str] = Query(None), gst_status: Optional[str] = Query(None), sort_by: str = Query("cp_inv_date"), sort_dir: str = Query("desc"), db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def cp_invoices_table(
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=500),
+    search: Optional[str] = Query(None),
+    period: str = Query("month"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    cp_name: Optional[str] = Query(None),
+    payment_status: Optional[str] = Query(None),
+    gst_status: Optional[str] = Query(None),
+    sort_by: str = Query("cp_inv_date"),
+    sort_dir: str = Query("desc"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     _must_access(current_user)
+    start, end = _period_bounds(period, date_from, date_to)
     f = []
     if cp_name: f.append(func.lower(models.TrackerCPInvoice.cp_name) == cp_name.strip().lower())
     if payment_status: f.append(func.lower(models.TrackerCPInvoice.cp_payment_status) == payment_status.strip().lower())
     if gst_status: f.append(func.lower(models.TrackerCPInvoice.gst_status) == gst_status.strip().lower())
-    return _paged(models.TrackerCPInvoice, page, limit, search, sort_by, sort_dir, f, db, ["id","cp_name","candidate_name","service_month","client_inv_no","client_inv_value","client_payment_dt","cp_inv_no","cp_inv_value","cp_payment_status","gst_status","remarks"])
+    f.append(models.TrackerCPInvoice.cp_inv_date >= start)
+    f.append(models.TrackerCPInvoice.cp_inv_date <= end)
+    result = _paged(models.TrackerCPInvoice, page, limit, search, sort_by, sort_dir, f, db, ["id","cp_name","candidate_name","service_month","client_inv_no","client_inv_value","client_payment_dt","cp_inv_no","cp_inv_date","cp_inv_value","cp_payment_status","gst_status","remarks"])
+    today = datetime.utcnow().date()
+    for item in result["items"]:
+        cp_inv_value = float(item.get("cp_inv_value") or 0)
+        paid = _is_paid_status(item.get("cp_payment_status"))
+        cp_inv_date = _to_date(item.get("cp_inv_date"))
+        overdue = bool(cp_inv_date and cp_inv_date + timedelta(days=30) < today and not paid)
+        item["payment_status_display"] = "Paid" if paid else ("Overdue" if overdue else "Pending")
+        item["net_payable"] = 0.0 if paid else round(cp_inv_value, 2)
+    return result
 
 
 def _section_from_text(text: str) -> Optional[str]:

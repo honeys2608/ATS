@@ -1,0 +1,10 @@
+INFO:     Started server process [148512]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('127.0.0.1', 8000): only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+DATABASE_URL from ENV: postgresql://postgres:post1234@localhost:5432/ats-hr-backend
+Seeding ROLE_PERMISSIONS into DB (upsert missing)...
+Permissions upsert complete. Added: 0
+Background scheduler started for passive requirement monitoring

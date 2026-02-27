@@ -38,6 +38,29 @@ def ensure_employee_owns_profile(current_user, employee):
             raise HTTPException(403, "You can access only your own documents")
 
 
+def _get_upload_policy(db: Session):
+    rows = (
+        db.query(models.SystemSettings)
+        .filter(models.SystemSettings.config_key.in_(["uploads.max_file_size_mb", "uploads.allowed_extensions"]))
+        .all()
+    )
+    max_mb = 10
+    allowed = set(ALLOWED_EXT)
+    for row in rows:
+        key = row.config_key or f"{row.module_name}.{row.setting_key}"
+        value = row.value_json if row.value_json is not None else row.setting_value
+        if key == "uploads.max_file_size_mb":
+            try:
+                max_mb = int(value or 10)
+            except Exception:
+                max_mb = 10
+        if key == "uploads.allowed_extensions" and isinstance(value, list):
+            parsed = {str(v).lower().strip() for v in value if str(v).strip()}
+            if parsed:
+                allowed = parsed
+    return max_mb, allowed
+
+
 # ===================================================================
 # 1️⃣ UPLOAD DOCUMENT (Secured + validated + size-limit)
 # ===================================================================
@@ -66,14 +89,15 @@ def upload_document(
         require_permission("documents", "create")(current_user)
 
     # Validate file extension
+    max_mb, allowed_ext = _get_upload_policy(db)
     ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in ALLOWED_EXT:
+    if ext not in allowed_ext:
         raise HTTPException(400, "Unsupported file type")
 
     # Read file contents
     contents = file.file.read()
-    if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(400, "File exceeds 10MB limit")
+    if len(contents) > max_mb * 1024 * 1024:
+        raise HTTPException(400, f"File exceeds {max_mb}MB limit")
 
     # Prepare upload folder
     folder = os.path.join(UPLOAD_ROOT, "employees", employee_id)

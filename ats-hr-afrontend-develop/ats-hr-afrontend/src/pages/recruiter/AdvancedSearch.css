@@ -57,7 +57,7 @@
   padding: 24px 30px 30px;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .semantic-search-page__context {

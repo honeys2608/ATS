@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.db import SessionLocal
+from app.utils.user_agent import parse_user_agent
 
 SECRET_KEY = os.getenv("SESSION_SECRET", "akshu-hr-secret-key")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
@@ -180,43 +181,6 @@ def _resolve_location_from_ip(ip_value: Optional[str]) -> Optional[str]:
 
     _location_cache[ip_text] = (now, location_value)
     return location_value
-
-
-def _parse_user_agent(user_agent: Optional[str]) -> dict:
-    ua = _normalize_text(user_agent)
-    ua_lower = ua.lower()
-    if not ua:
-        return {"device": None, "browser": None, "os": None}
-
-    device = "Desktop"
-    if any(k in ua_lower for k in ("mobile", "iphone", "android")):
-        device = "Mobile"
-    elif any(k in ua_lower for k in ("ipad", "tablet")):
-        device = "Tablet"
-
-    browser = "Other"
-    if "edg/" in ua_lower:
-        browser = "Edge"
-    elif "chrome/" in ua_lower and "chromium" not in ua_lower and "edg/" not in ua_lower:
-        browser = "Chrome"
-    elif "safari/" in ua_lower and "chrome/" not in ua_lower:
-        browser = "Safari"
-    elif "firefox/" in ua_lower:
-        browser = "Firefox"
-
-    os_name = "Other"
-    if "windows" in ua_lower:
-        os_name = "Windows"
-    elif "mac os" in ua_lower or "macintosh" in ua_lower:
-        os_name = "macOS"
-    elif "android" in ua_lower:
-        os_name = "Android"
-    elif "iphone" in ua_lower or "ipad" in ua_lower or "ios" in ua_lower:
-        os_name = "iOS"
-    elif "linux" in ua_lower:
-        os_name = "Linux"
-
-    return {"device": device, "browser": browser, "os": os_name}
 
 
 def map_audit_severity(
@@ -419,7 +383,7 @@ def log_audit(
             req_code = 500
         req_ip = ip_address or _extract_ip(request)
         req_ua = user_agent or _extract_user_agent(request)
-        ua_parts = _parse_user_agent(req_ua)
+        ua_parts = parse_user_agent(req_ua)
         final_device = device or ua_parts["device"]
         final_browser = browser or ua_parts["browser"]
         final_os = os or ua_parts["os"]

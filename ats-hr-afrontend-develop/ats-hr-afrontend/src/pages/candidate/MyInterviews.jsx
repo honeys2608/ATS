@@ -24,8 +24,8 @@ const STATUS_STYLES = {
 
 const TYPE_LABELS = {
   ai_chat: "AI Chat",
-  video: "Google Meet",
-  live: "Google Meet",
+  video: "Online Meeting",
+  live: "Online Meeting",
   in_person: "In-Person",
 };
 

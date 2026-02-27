@@ -63,6 +63,8 @@ from app.routes.bgv import router as bgv_router
 from app.routes.client_admin import router as client_admin_router
 from app.routes.skills import router as skills_router
 from app.routes.super_admin import router as super_admin_router
+from app.routes.super_admin_business_setup import router as super_admin_business_setup_router
+from app.routes.superadmin_alias import router as superadmin_alias_router
 from app.routes.super_admin_tracker import router as super_admin_tracker_router
 from app.routes.config import router as config_router
 from app.routes.nomenclature import router as nomenclature_router
@@ -99,6 +101,7 @@ from app.permissions import ROLE_PERMISSIONS
 from app import models
 from app.services.audit_service import register_audit_middleware
 from app.events.audit_listeners import register_audit_listeners
+from app.middleware.maintenance_mode import register_maintenance_middleware
 
 
 def seed_permissions_to_db():
@@ -135,6 +138,7 @@ app = FastAPI(
     version="1.0.0"
 )
 register_audit_middleware(app)
+register_maintenance_middleware(app)
 
 
 # ---------------- CORS ----------------
@@ -229,6 +233,8 @@ protected_routers = [
     reports_router,
     folders_router,
     super_admin_router,
+    super_admin_business_setup_router,
+    superadmin_alias_router,
     super_admin_tracker_router,
     super_admin_workflow_router,
     super_admin_tasks_router,
@@ -258,11 +264,11 @@ async def startup_event():
     try:
         scheduler = setup_background_scheduler()
         if scheduler:
-            print("✅ Background scheduler started for passive requirement monitoring")
+            print("Background scheduler started for passive requirement monitoring")
         else:
-            print("⚠️  Background scheduler not available - install APScheduler for production")
+            print("Background scheduler not available - install APScheduler for production")
     except Exception as e:
-        print(f"⚠️  Failed to start background scheduler: {e}")
+        print(f"Failed to start background scheduler: {e}")
 
 # ---------------- BASIC ENDPOINTS ----------------
 @app.get("/api")

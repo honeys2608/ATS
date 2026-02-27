@@ -11,6 +11,8 @@ from typing import List, Optional, Dict
 from datetime import datetime
 import logging
 from fastapi import BackgroundTasks
+from app.db import SessionLocal
+from app import models
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +22,50 @@ FROM_EMAIL = os.getenv("SENDER_EMAIL", "noreply@akshu-hr.com")
 FROM_PASSWORD = os.getenv("SENDER_PASSWORD", "your_app_password")
 
 
+def _get_setting(key: str, default=None):
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(models.SystemSettings)
+            .filter(
+                (models.SystemSettings.config_key == key)
+                | (
+                    (models.SystemSettings.module_name == key.split(".", 1)[0])
+                    & (models.SystemSettings.setting_key == key.split(".", 1)[1] if "." in key else key)
+                )
+            )
+            .order_by(models.SystemSettings.updated_at.desc())
+            .first()
+        )
+        if not row:
+            return default
+        if row.value_json is not None:
+            return row.value_json
+        if row.setting_value is not None:
+            return row.setting_value
+        return default
+    except Exception:
+        return default
+    finally:
+        db.close()
+
+
 def send_email(to_email: str, subject: str, text: str = None, html_content: str = None):
     """
     Supports BOTH plain text and HTML emails.
     """
 
+    provider = str(_get_setting("email.provider", "smtp") or "smtp").strip().lower()
+    if not bool(_get_setting("notify.enable_system_emails", True)):
+        logger.info("System emails disabled by settings")
+        return True
+
+    sender_name = str(_get_setting("email.from_name", "ATS-HR") or "ATS-HR").strip()
+    sender_address = str(_get_setting("email.from_address", FROM_EMAIL) or FROM_EMAIL).strip()
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = FROM_EMAIL
+    msg["From"] = f"{sender_name} <{sender_address}>"
     msg["To"] = to_email
 
     # Add plain text if provided
@@ -39,10 +77,33 @@ def send_email(to_email: str, subject: str, text: str = None, html_content: str 
         msg.attach(MIMEText(html_content, "html"))
 
     try:
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        if provider not in {"smtp", "sendgrid"}:
+            provider = "smtp"
+
+        if provider == "sendgrid":
+            # Keep runtime simple: SendGrid SMTP relay mode using existing SMTP pipeline.
+            sendgrid_key = str(_get_setting("email.sendgrid_api_key", "") or "").strip()
+            if sendgrid_key:
+                smtp_server = "smtp.sendgrid.net"
+                smtp_port = 587
+                smtp_user = "apikey"
+                smtp_password = sendgrid_key
+            else:
+                smtp_server = SMTP_SERVER
+                smtp_port = SMTP_PORT
+                smtp_user = sender_address
+                smtp_password = FROM_PASSWORD
+        else:
+            smtp_cfg = _get_setting("email.smtp_config", {}) or {}
+            smtp_server = str(smtp_cfg.get("server") or SMTP_SERVER)
+            smtp_port = int(smtp_cfg.get("port") or SMTP_PORT)
+            smtp_user = str(smtp_cfg.get("username") or sender_address)
+            smtp_password = str(smtp_cfg.get("password") or FROM_PASSWORD)
+
+        server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
-        server.login(FROM_EMAIL, FROM_PASSWORD)
-        server.sendmail(FROM_EMAIL, to_email, msg.as_string())
+        server.login(smtp_user, smtp_password)
+        server.sendmail(sender_address, to_email, msg.as_string())
         server.quit()
         logger.info(f"Email sent to {to_email}: {subject}")
         return True

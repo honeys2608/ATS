@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import {
   BrowserRouter as Router,
   Routes,
@@ -125,14 +125,23 @@ import AdminLayout from "./pages/AdminLayout";
 import SuperAdminLayout from "./pages/super-admin/SuperAdminLayout";
 import SuperAdminDashboard from "./pages/super-admin/SuperAdminDashboard";
 import BusinessSetup from "./pages/super-admin/BusinessSetup";
+import BusinessSetupOrgStructure from "./pages/super-admin/business-setup/OrgStructure";
+import BusinessSetupJobSettings from "./pages/super-admin/business-setup/JobSettings";
+import BusinessSetupCompanyProfile from "./pages/super-admin/business-setup/CompanyProfile";
+import BusinessSetupEmailTemplates from "./pages/super-admin/business-setup/EmailTemplates";
+import BusinessSetupApprovalWorkflows from "./pages/super-admin/business-setup/ApprovalWorkflows";
+import BusinessSetupIntegrations from "./pages/super-admin/business-setup/Integrations";
 import ClientsTenants from "./pages/super-admin/ClientsTenants";
 import AdminManagement from "./pages/super-admin/AdminManagement";
 import RolesPermissions from "./pages/super-admin/RolesPermissions";
+import TrackerMetricsDashboard from "./pages/super-admin/TrackerMetricsDashboard";
 import OperationsAnalytics from "./pages/super-admin/OperationsAnalytics";
 import FinanceBilling from "./pages/super-admin/FinanceBilling";
 import ComplianceSecurity from "./pages/super-admin/ComplianceSecurity";
 import SystemSettingsSuperAdmin from "./pages/super-admin/SystemSettings";
 import AuditLogs from "./pages/super-admin/AuditLogs";
+import SuperAdminUserManagement from "./pages/super-admin/UserManagement";
+import WorkflowBuilder from "./pages/super-admin/WorkflowBuilder";
 import ResdexSearchResumes from "./pages/recruiter/ResdexSearchResumes";
 import ResdexSendNVite from "./pages/recruiter/ResdexSendNVite";
 import ResdexManageSearches from "./pages/recruiter/ResdexManageSearches";
@@ -174,6 +183,19 @@ import ClientTimesheets from "./pages/client/ClientTimesheets";
 import ClientTimesheetHistory from "./pages/client/ClientTimesheetHistory";
 import AMTimesheetHistory from "./pages/account-manager/AMTimesheetHistory";
 
+function AppRouter({ children }) {
+  return (
+    <Router
+      future={{
+        v7_startTransition: true,
+        v7_relativeSplatPath: true,
+      }}
+    >
+      {children}
+    </Router>
+  );
+}
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(
     !!localStorage.getItem("access_token"),
@@ -198,7 +220,7 @@ function App() {
   // PUBLIC (NOT LOGGED IN)
   if (!isAuthenticated) {
     return (
-      <Router>
+      <AppRouter>
         <Routes>
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
           <Route path="/register" element={<Register />} />
@@ -215,14 +237,14 @@ function App() {
 
           <Route path="*" element={<Navigate to="/careers" replace />} />
         </Routes>
-      </Router>
+      </AppRouter>
     );
   }
 
   // CANDIDATE ROLE
   if (authRole && authRole.toLowerCase() === "candidate") {
     return (
-      <Router>
+      <AppRouter>
         <Routes>
           <Route
             path="/candidate"
@@ -263,14 +285,14 @@ function App() {
             element={<Navigate to="/candidate/dashboard" replace />}
           />
         </Routes>
-      </Router>
+      </AppRouter>
     );
   }
 
   // SUPER ADMIN ROLE
   if (authRole === "super_admin") {
     return (
-      <Router>
+      <AppRouter>
         <SuperAdminLayout onLogout={handleLogout}>
           <Routes>
             <Route
@@ -282,6 +304,12 @@ function App() {
               element={<SuperAdminDashboard />}
             />
             <Route path="/super-admin/business-setup" element={<BusinessSetup />} />
+            <Route path="/super-admin/business-setup/org-structure" element={<BusinessSetupOrgStructure />} />
+            <Route path="/super-admin/business-setup/job-settings" element={<BusinessSetupJobSettings />} />
+            <Route path="/super-admin/business-setup/company-profile" element={<BusinessSetupCompanyProfile />} />
+            <Route path="/super-admin/business-setup/email-templates" element={<BusinessSetupEmailTemplates />} />
+            <Route path="/super-admin/business-setup/approval-workflows" element={<BusinessSetupApprovalWorkflows />} />
+            <Route path="/super-admin/business-setup/integrations" element={<BusinessSetupIntegrations />} />
             <Route path="/super-admin/clients" element={<ClientsTenants />} />
             <Route
               path="/super-admin/admin-management"
@@ -290,6 +318,14 @@ function App() {
             <Route
               path="/super-admin/roles-permissions"
               element={<RolesPermissions />}
+            />
+            <Route
+              path="/super-admin/tracker-dashboard"
+              element={<TrackerMetricsDashboard />}
+            />
+            <Route
+              path="/super-admin/workflow-builder"
+              element={<WorkflowBuilder />}
             />
             <Route
               path="/super-admin/operations-analytics"
@@ -307,6 +343,42 @@ function App() {
               path="/super-admin/system-settings"
               element={<SystemSettingsSuperAdmin />}
             />
+            <Route
+              path="/super-admin/system-settings/general"
+              element={<SystemSettingsSuperAdmin />}
+            />
+            <Route
+              path="/super-admin/system-settings/security"
+              element={<SystemSettingsSuperAdmin />}
+            />
+            <Route
+              path="/super-admin/system-settings/email"
+              element={<SystemSettingsSuperAdmin />}
+            />
+            <Route
+              path="/super-admin/system-settings/uploads"
+              element={<SystemSettingsSuperAdmin />}
+            />
+            <Route
+              path="/super-admin/system-settings/feature-flags"
+              element={<SystemSettingsSuperAdmin />}
+            />
+            <Route
+              path="/super-admin/system-settings/maintenance"
+              element={<SystemSettingsSuperAdmin />}
+            />
+            <Route
+              path="/super-admin/system-settings/audit-logs"
+              element={<SystemSettingsSuperAdmin />}
+            />
+            <Route
+              path="/super-admin/user-management/users"
+              element={<SuperAdminUserManagement />}
+            />
+            <Route
+              path="/super-admin/users"
+              element={<Navigate to="/super-admin/user-management/users" replace />}
+            />
             <Route path="/super-admin/audit-logs" element={<AuditLogs />} />
             <Route
               path="*"
@@ -314,14 +386,14 @@ function App() {
             />
           </Routes>
         </SuperAdminLayout>
-      </Router>
+      </AppRouter>
     );
   }
 
   // VENDOR ROLE
   if (authRole === "vendor") {
     return (
-      <Router>
+      <AppRouter>
         <Routes>
           <Route path="/vendor" element={<VendorLayout />}>
             <Route index element={<VendorDashboard />} />
@@ -334,14 +406,14 @@ function App() {
           </Route>
           <Route path="*" element={<Navigate to="/vendor/dashboard" replace />} />
         </Routes>
-      </Router>
+      </AppRouter>
     );
   }
 
   // CLIENT ROLE
   if (authRole === "client") {
     return (
-      <Router>
+      <AppRouter>
         <Routes>
           <Route path="/client" element={<ClientLayout onLogout={handleLogout} />}>
             <Route index element={<ClientDashboard />} />
@@ -357,14 +429,14 @@ function App() {
           </Route>
           <Route path="*" element={<Navigate to="/client/dashboard" replace />} />
         </Routes>
-      </Router>
+      </AppRouter>
     );
   }
 
   // RECRUITER ROLE
   if (authRole === "recruiter") {
     return (
-      <Router>
+      <AppRouter>
         <Routes>
           <Route path="/recruiter" element={<RecruiterLayout onLogout={handleLogout} />}>
             <Route index element={<RecruiterDashboard />} />
@@ -377,6 +449,7 @@ function App() {
               element={<RequirementDetail />}
             />
             <Route path="profile" element={<RecruiterProfile />} />
+            <Route path="my-profile" element={<RecruiterProfile />} />
             <Route path="settings" element={<RecruiterSettings />} />
             <Route path="trackers" element={<Trackers />} />
             <Route path="reports" element={<ReportsDashboard />} />
@@ -402,6 +475,8 @@ function App() {
             <Route path="interviews" element={<Interviews />} />
             <Route path="interviews/calendar" element={<InterviewCalendar />} />
             <Route path="interviews/logs" element={<InterviewLogs />} />
+            <Route path="interview-calendar" element={<InterviewCalendar />} />
+            <Route path="interview-logs" element={<InterviewLogs />} />
             <Route path="interviews/:id" element={<InterviewDetail />} />
             <Route path="interviews/:id/detail" element={<InterviewDetail />} />
             <Route path="live-interviews/:id/detail" element={<LiveInterviewDetail />} />
@@ -432,14 +507,14 @@ function App() {
 
           <Route path="*" element={<Navigate to="/recruiter/dashboard" replace />} />
         </Routes>
-      </Router>
+      </AppRouter>
     );
   }
 
   // ACCOUNT MANAGER ROLE
   if (authRole === "account_manager") {
     return (
-      <Router>
+      <AppRouter>
         <PermissionProvider>
           <ThemeProvider>
             <Routes>
@@ -476,13 +551,13 @@ function App() {
             </Routes>
           </ThemeProvider>
         </PermissionProvider>
-      </Router>
+      </AppRouter>
     );
   }
 
   // ADMIN / RECRUITER / EMPLOYEE
   return (
-    <Router>
+    <AppRouter>
       <PermissionProvider>
         <ThemeProvider>
           <AdminLayout onLogout={handleLogout}>
@@ -642,7 +717,7 @@ function App() {
           </AdminLayout>
         </ThemeProvider>
       </PermissionProvider>
-    </Router>
+    </AppRouter>
   );
 }
 

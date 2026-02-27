@@ -1539,7 +1539,7 @@ def mark_interview_scheduling_ready(
         title=f"Interview scheduling ready: {candidate_name}",
         message=(
             f"{candidate_name} is shortlisted for {requirement_label}. "
-            "You can now schedule the interview."
+            f"You can now schedule the interview. AM note: {ready_note}"
         ),
         reference_id=candidate.id,
         requirement_id=requirement_id,
@@ -1682,6 +1682,27 @@ def schedule_interview_status(
         "interview_scheduled",
         f"Interview: {effective_interview_date}. {effective_notes or selected_app.interview_scheduling_note or ''}".strip(),
     )
+
+    # Consume pending AM handoff notifications once recruiter schedules interview.
+    requester_id = str(current_user.get("id") or "").strip()
+    if requester_id:
+        (
+            db.query(models.SystemNotification)
+            .filter(
+                models.SystemNotification.user_id == requester_id,
+                models.SystemNotification.notification_type == "interview_scheduling_ready",
+                models.SystemNotification.reference_id == candidate.id,
+                models.SystemNotification.is_read == False,
+            )
+            .update(
+                {
+                    models.SystemNotification.is_read: True,
+                    models.SystemNotification.read_at: datetime.utcnow(),
+                },
+                synchronize_session=False,
+            )
+        )
+
     db.commit()
     
     return {

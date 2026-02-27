@@ -51,6 +51,13 @@ MODULE_NAMES = {
     "audit_logs": "Audit Logs",
     "system_settings": "System Settings",
     "feature_flags": "Feature Flags",
+    "maintenance": "Maintenance",
+    "org_structure": "Organization Structure",
+    "job_settings": "Job Settings",
+    "company_profile": "Company Profile",
+    "email_templates": "Email Templates",
+    "approval_workflows": "Approval Workflows",
+    "integrations": "Integrations",
 }
 
 # ---------------------------------------------------------
@@ -117,7 +124,13 @@ ROLE_PERMISSIONS = {
 
         # Super Admin governance modules
         "super_admin_dashboard": ["view"],
-        "business_setup": ["view", "update"],
+        "business_setup": ["view", "manage", "update"],
+        "org_structure": ["manage", "view"],
+        "job_settings": ["manage", "view"],
+        "company_profile": ["manage", "view"],
+        "email_templates": ["manage", "view"],
+        "approval_workflows": ["manage", "view"],
+        "integrations": ["manage", "view"],
         "clients_tenants": ["create", "view", "update", "suspend"],
         "admin_management": ["create", "view", "update", "suspend"],
         "roles_permissions": ["view", "update", "lock"],
@@ -125,8 +138,9 @@ ROLE_PERMISSIONS = {
         "finance_billing": ["view", "update", "export"],
         "compliance_security": ["view", "export"],
         "audit_logs": ["view", "export"],
-        "system_settings": ["view", "update"],
-        "feature_flags": ["view", "update"],
+        "system_settings": ["view", "update", "manage"],
+        "feature_flags": ["view", "update", "manage"],
+        "maintenance": ["view", "update", "manage"],
     },
 
     "recruiter": {

@@ -482,6 +482,10 @@ class CandidateBase(BaseModel):
     resume_path: Optional[str] = None
     parsed_resume: Optional[Any] = None
     parsed_data_json: Optional[Any] = None
+    parsed_json: Optional[Any] = None
+    parsed_at: Optional[datetime] = None
+    parser_version: Optional[str] = None
+    raw_text: Optional[str] = None
     resume_versions: Optional[List[Any]] = []
     photo_url: Optional[str] = None
     

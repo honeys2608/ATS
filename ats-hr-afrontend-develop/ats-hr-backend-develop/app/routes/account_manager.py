@@ -1084,56 +1084,40 @@ def dashboard_pipeline_pie(
     am_id = get_user_id(current_user)
     current_start, current_end, _, _ = _resolve_period_windows(filter_key)
 
-    candidate_status_ts = func.coalesce(models.Candidate.updated_at, models.Candidate.created_at)
-    candidate_ids_subquery = (
-        db.query(models.JobApplication.candidate_id)
-        .join(models.Job, models.Job.id == models.JobApplication.job_id)
-        .filter(_job_scope_clause(am_id))
-        .distinct()
-        .subquery()
-    )
-    candidate_ids_select = select(candidate_ids_subquery.c.candidate_id)
-
-    candidate_rows = (
-        db.query(
-            models.Candidate.id.label("candidate_id"),
-            models.Candidate.full_name,
-            models.Candidate.status,
-            models.Candidate.current_job_title,
-            candidate_status_ts.label("status_updated_at"),
-        )
-        .filter(models.Candidate.id.in_(candidate_ids_select))
-        .filter(candidate_status_ts >= current_start)
-        .filter(candidate_status_ts <= current_end)
-        .all()
-    )
-
     app_ts = func.coalesce(
         models.JobApplication.decision_at,
         models.JobApplication.sent_to_client_at,
         models.JobApplication.shortlisted_at,
         models.JobApplication.applied_at,
     )
+    app_status_expr = _status_expression(models.JobApplication.status)
     app_rows = (
         db.query(
             models.JobApplication.candidate_id.label("candidate_id"),
+            models.Candidate.full_name.label("full_name"),
+            app_status_expr.label("status"),
             models.Job.title.label("job_title"),
             app_ts.label("activity_at"),
         )
         .join(models.Job, models.Job.id == models.JobApplication.job_id)
+        .outerjoin(models.Candidate, models.Candidate.id == models.JobApplication.candidate_id)
         .filter(_job_scope_clause(am_id))
+        .filter(app_ts >= current_start)
+        .filter(app_ts <= current_end)
         .all()
     )
 
-    latest_job_by_candidate: Dict[str, Dict[str, Any]] = {}
+    latest_app_by_candidate: Dict[str, Dict[str, Any]] = {}
     for row in app_rows:
         candidate_id = str(row.candidate_id or "")
         if not candidate_id:
             continue
         timestamp = row.activity_at or datetime.min
-        existing = latest_job_by_candidate.get(candidate_id)
+        existing = latest_app_by_candidate.get(candidate_id)
         if not existing or timestamp >= existing.get("timestamp", datetime.min):
-            latest_job_by_candidate[candidate_id] = {
+            latest_app_by_candidate[candidate_id] = {
+                "status": _normalize_status_value(row.status),
+                "full_name": row.full_name,
                 "job_title": row.job_title,
                 "timestamp": timestamp,
             }
@@ -1152,17 +1136,15 @@ def dashboard_pipeline_pie(
         for status in statuses:
             status_to_group[status] = group_name
 
-    for row in candidate_rows:
-        status_key = _normalize_status_value(row.status)
+    for candidate_id, latest in latest_app_by_candidate.items():
+        status_key = _normalize_status_value(latest.get("status"))
         group_name = status_to_group.get(status_key)
         if not group_name:
             continue
 
-        candidate_id = str(row.candidate_id or "")
-        display_name = row.full_name or "Unnamed Candidate"
+        display_name = latest.get("full_name") or "Unnamed Candidate"
         exact_status_label = CANDIDATE_PIPELINE_STATUS_LABELS.get(status_key, status_key.replace("_", " ").title())
-        latest_job = latest_job_by_candidate.get(candidate_id) or {}
-        job_title = latest_job.get("job_title") or row.current_job_title or "Not specified"
+        job_title = latest.get("job_title") or "Not specified"
 
         group_data[group_name]["count"] += 1
         group_data[group_name]["breakdown"][status_key] = (
@@ -1222,9 +1204,14 @@ def dashboard_panels_summary(
     current_start, current_end, _, _ = _resolve_period_windows(filter_key)
 
     requirement_status_expr = _status_expression(models.Requirement.status)
-    candidate_status_expr = _status_expression(models.Candidate.status)
+    application_status_expr = _status_expression(models.JobApplication.status)
     consultant_status_expr = _status_expression(models.Consultant.status)
-    candidate_status_ts = func.coalesce(models.Candidate.updated_at, models.Candidate.created_at)
+    app_ts = func.coalesce(
+        models.JobApplication.decision_at,
+        models.JobApplication.sent_to_client_at,
+        models.JobApplication.shortlisted_at,
+        models.JobApplication.applied_at,
+    )
 
     active_requirement_rows = (
         db.query(models.Requirement.id, models.Requirement.job_id)
@@ -1265,30 +1252,23 @@ def dashboard_panels_summary(
             if mapped_req:
                 with_submission_ids.add(mapped_req)
 
-    candidate_ids_subquery = (
-        db.query(models.JobApplication.candidate_id)
+    am_shortlisted_count = int(
+        db.query(func.count(models.JobApplication.id))
         .join(models.Job, models.Job.id == models.JobApplication.job_id)
         .filter(_job_scope_clause(am_id))
-        .distinct()
-        .subquery()
-    )
-    candidate_ids_select = select(candidate_ids_subquery.c.candidate_id)
-
-    am_shortlisted_count = int(
-        db.query(func.count(models.Candidate.id))
-        .filter(models.Candidate.id.in_(candidate_ids_select))
-        .filter(candidate_status_ts >= current_start)
-        .filter(candidate_status_ts <= current_end)
-        .filter(candidate_status_expr.in_(["am_shortlisted"]))
+        .filter(app_ts >= current_start)
+        .filter(app_ts <= current_end)
+        .filter(application_status_expr.in_(["am_shortlisted"]))
         .scalar()
         or 0
     )
     client_shortlisted_count = int(
-        db.query(func.count(models.Candidate.id))
-        .filter(models.Candidate.id.in_(candidate_ids_select))
-        .filter(candidate_status_ts >= current_start)
-        .filter(candidate_status_ts <= current_end)
-        .filter(candidate_status_expr.in_(["client_shortlisted"]))
+        db.query(func.count(models.JobApplication.id))
+        .join(models.Job, models.Job.id == models.JobApplication.job_id)
+        .filter(_job_scope_clause(am_id))
+        .filter(app_ts >= current_start)
+        .filter(app_ts <= current_end)
+        .filter(application_status_expr.in_(["client_shortlisted"]))
         .scalar()
         or 0
     )

@@ -12,12 +12,15 @@ from sqlalchemy import (
     ForeignKey,
     Table,
     Enum,
+    event,
+    Index,
 )
 from sqlalchemy.orm import relationship
 # from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, date
 import uuid
 from app.db import Base
+from app.utils.user_agent import parse_user_agent
 from sqlalchemy import UniqueConstraint   # 👈 add at top if not present
 
 def validate_candidate_job_match(candidate, job):
@@ -174,6 +177,17 @@ class User(Base):
         nullable=True
     )
     full_name = Column(String, nullable=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="active", index=True)
+    role_id = Column(Integer, nullable=True, index=True)
+    tenant_id = Column(String, nullable=True, index=True)
+    last_login_at = Column(DateTime, nullable=True)
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    session_invalid_after = Column(DateTime, nullable=True)
 
     # ⭐⭐ IMPORTANT — CLIENT COMPANY NAME ⭐⭐
     company_name = Column(String, nullable=True)
@@ -562,6 +576,10 @@ class Candidate(Base):
     # =========================
     parsed_resume = Column(JSON)
     parsed_data_json = Column(JSON)
+    parsed_json = Column(JSON)
+    parsed_at = Column(DateTime)
+    parser_version = Column(String(50))
+    raw_text = Column(Text)
     embedding_vector = Column(JSON)
     resume_versions = Column(JSON)
 
@@ -1795,20 +1813,226 @@ class SystemSettings(Base):
     __tablename__ = "system_settings"
 
     id = Column(String, primary_key=True, default=generate_uuid)
+    config_key = Column("key", String, unique=True, index=True, nullable=True)
+    value_json = Column(JSON, nullable=True)
+    value_type = Column(String(20), nullable=True, default="json")
+    category = Column(String(100), nullable=True, index=True)
     module_name = Column(String)
     setting_key = Column(String)
     setting_value = Column(JSON)
     description = Column(Text)
+    is_secret = Column(Boolean, default=False, nullable=False)
+    is_editable = Column(Boolean, default=True, nullable=False)
     updated_by = Column(String, ForeignKey("users.id"))
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Department(Base):
+    __tablename__ = "departments"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    code = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_departments_tenant_name"),
+    )
+
+
+class Location(Base):
+    __tablename__ = "locations"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    city = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_locations_tenant_name"),
+    )
+
+
+class Designation(Base):
+    __tablename__ = "designations"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    level = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_designations_tenant_name"),
+    )
+
+
+class JobTemplate(Base):
+    __tablename__ = "job_templates"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    json_config = Column(JSON, default=dict, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class HiringStage(Base):
+    __tablename__ = "hiring_stages"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    stage_type = Column(String, nullable=True, index=True)
+    sort_order = Column(Integer, default=0, nullable=False, index=True)
+    required_fields = Column(JSON, default=list, nullable=False)
+    is_default = Column(Boolean, default=False, nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_hiring_stages_tenant_name"),
+        Index("ix_hiring_stages_tenant_sort", "tenant_id", "sort_order"),
+    )
+
+
+class BrandingSetting(Base):
+    __tablename__ = "branding_settings"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True, unique=True)
+    config_json = Column(JSON, default=dict, nullable=False)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PortalPreference(Base):
+    __tablename__ = "portal_preferences"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True, unique=True)
+    config_json = Column(JSON, default=dict, nullable=False)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BusinessEmailTemplate(Base):
+    __tablename__ = "business_email_templates"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True)
+    category = Column(String, nullable=False, index=True)
+    key = Column(String, nullable=False, index=True)
+    subject = Column(String, nullable=False)
+    body_html = Column(Text, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "category", "key", name="uq_business_email_templates_scope_key"),
+    )
+
+
+class ApprovalWorkflow(Base):
+    __tablename__ = "approval_workflows"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True)
+    type = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    condition_json = Column(JSON, default=dict, nullable=False)
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ApprovalStep(Base):
+    __tablename__ = "approval_steps"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    workflow_id = Column(String, ForeignKey("approval_workflows.id"), nullable=False, index=True)
+    step_order = Column(Integer, default=1, nullable=False, index=True)
+    approver_type = Column(String, nullable=False)
+    approver_ref = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ApprovalCondition(Base):
+    __tablename__ = "approval_conditions"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    workflow_id = Column(String, ForeignKey("approval_workflows.id"), nullable=False, index=True)
+    condition_json = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Integration(Base):
+    __tablename__ = "integrations"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=True, index=True)
+    provider = Column(String, nullable=False, index=True)
+    status = Column(String, default="disconnected", nullable=False, index=True)
+    config_json = Column(JSON, default=dict, nullable=False)
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "provider", name="uq_integrations_scope_provider"),
+    )
+
+
+class IntegrationLog(Base):
+    __tablename__ = "integration_logs"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    integration_id = Column(String, ForeignKey("integrations.id"), nullable=False, index=True)
+    status = Column(String, nullable=False, index=True)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class FeatureFlag(Base):
     __tablename__ = "feature_flags"
 
     id = Column(String, primary_key=True, default=generate_uuid)
+    public_key = Column("key", String, unique=True, index=True, nullable=True)
     flag_key = Column(String, unique=True, index=True, nullable=False)
     enabled = Column(Boolean, default=False)
+    rollout_json = Column(JSON, default=dict, nullable=False)
     description = Column(Text, nullable=True)
     updated_by = Column(String, ForeignKey("users.id"))
     updated_at = Column(DateTime, default=datetime.utcnow)
@@ -1833,8 +2057,12 @@ class Workflow(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     key = Column(String(120), unique=True, nullable=False, index=True)
+    tenant_id = Column(String, nullable=True, index=True)
     name = Column(String(255), nullable=False)
+    department = Column(String(120), nullable=True, index=True)
+    job_type = Column(String(120), nullable=True, index=True)
     description = Column(Text, nullable=True)
+    status = Column(String(30), nullable=False, default="draft", index=True)  # draft | published | archived
     is_active = Column(Boolean, default=True, nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
@@ -1847,10 +2075,12 @@ class WorkflowStage(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     workflow_id = Column(String, ForeignKey("workflows.id"), nullable=False, index=True)
+    workflow_version_id = Column(String, ForeignKey("workflow_versions.id"), nullable=True, index=True)
     stage_key = Column(String(120), nullable=False, index=True)
     stage_name = Column(String(255), nullable=False)
     order_index = Column(Integer, nullable=False, default=0, index=True)
     color = Column(String(20), nullable=True, default="#6C2BD9")
+    settings_json = Column(JSON, default=dict, nullable=False)
     is_terminal = Column(Boolean, default=False, nullable=False)
     is_rejection = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -1860,6 +2090,51 @@ class WorkflowStage(Base):
         UniqueConstraint("workflow_id", "stage_key", name="uq_workflow_stage_key"),
         UniqueConstraint("workflow_id", "order_index", name="uq_workflow_stage_order"),
     )
+
+
+class WorkflowVersion(Base):
+    __tablename__ = "workflow_versions"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    workflow_id = Column(String, ForeignKey("workflows.id"), nullable=False, index=True)
+    version_no = Column(Integer, nullable=False, default=1, index=True)
+    status = Column(String(30), nullable=False, default="draft", index=True)  # draft | published | archived
+    published_at = Column(DateTime, nullable=True)
+    config_json = Column(JSON, default=dict, nullable=False)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "version_no", name="uq_workflow_version_no"),
+    )
+
+
+class WorkflowTransition(Base):
+    __tablename__ = "workflow_transitions"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    workflow_version_id = Column(String, ForeignKey("workflow_versions.id"), nullable=False, index=True)
+    from_stage_id = Column(String, ForeignKey("workflow_stages.id"), nullable=False, index=True)
+    to_stage_id = Column(String, ForeignKey("workflow_stages.id"), nullable=False, index=True)
+    condition_json = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
+
+
+class WorkflowRule(Base):
+    __tablename__ = "workflow_rules"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    workflow_version_id = Column(String, ForeignKey("workflow_versions.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    trigger = Column(String(120), nullable=False, index=True)
+    condition_json = Column(JSON, default=dict, nullable=False)
+    action_json = Column(JSON, default=dict, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
 
 
 class WorkflowScope(Base):
@@ -1915,6 +2190,40 @@ class TaskCompletion(Base):
 
     __table_args__ = (
         UniqueConstraint("submission_id", "task_id", name="uq_task_completion_submission_task"),
+    )
+
+
+class CandidateStageHistory(Base):
+    __tablename__ = "candidate_stage_history"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    candidate_id = Column(String, ForeignKey("candidates.id"), nullable=False, index=True)
+    job_id = Column(String, ForeignKey("jobs.id"), nullable=True, index=True)
+    workflow_version_id = Column(String, ForeignKey("workflow_versions.id"), nullable=True, index=True)
+    from_stage_id = Column(String, ForeignKey("workflow_stages.id"), nullable=True, index=True)
+    to_stage_id = Column(String, ForeignKey("workflow_stages.id"), nullable=False, index=True)
+    changed_by = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    changed_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    meta_json = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
+
+
+class CandidateStageCurrent(Base):
+    __tablename__ = "candidate_stage_current"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    candidate_id = Column(String, ForeignKey("candidates.id"), nullable=False, index=True)
+    job_id = Column(String, ForeignKey("jobs.id"), nullable=True, index=True)
+    workflow_version_id = Column(String, ForeignKey("workflow_versions.id"), nullable=True, index=True)
+    stage_id = Column(String, ForeignKey("workflow_stages.id"), nullable=False, index=True)
+    owner_user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    entered_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "job_id", name="uq_candidate_stage_current_candidate_job"),
     )
 
 
@@ -2274,6 +2583,30 @@ class AuditLog(Base):
 
     # Relationships
     user = relationship("User")
+
+
+def _populate_audit_ua_fields(target: "AuditLog") -> None:
+    ua = str(getattr(target, "user_agent", "") or "").strip()
+    if not ua:
+        return
+
+    parsed = parse_user_agent(ua)
+    if not getattr(target, "device", None):
+        target.device = parsed.get("device")
+    if not getattr(target, "browser", None):
+        target.browser = parsed.get("browser")
+    if not getattr(target, "os", None):
+        target.os = parsed.get("os")
+
+
+@event.listens_for(AuditLog, "before_insert")
+def _audit_log_before_insert(_mapper, _connection, target: "AuditLog") -> None:
+    _populate_audit_ua_fields(target)
+
+
+@event.listens_for(AuditLog, "before_update")
+def _audit_log_before_update(_mapper, _connection, target: "AuditLog") -> None:
+    _populate_audit_ua_fields(target)
 
 
 # ============================================================

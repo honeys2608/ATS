@@ -32,6 +32,21 @@ const normalizeRole = (role) =>
     .toLowerCase()
     .replace(/\s+/g, "_");
 
+const validateEmailDomain = (emailValue) => {
+  const value = String(emailValue || "").trim().toLowerCase();
+  if (!value || !value.includes("@")) return "Enter a valid email domain";
+  const parts = value.split("@");
+  if (parts.length !== 2) return "Enter a valid email domain";
+  const domain = parts[1] || "";
+  if (!domain || domain.startsWith(".") || domain.endsWith(".")) return "Enter a valid email domain";
+  if (domain.includes("..")) return "Enter a valid email domain";
+  const labels = domain.split(".");
+  if (labels.length < 2) return "Enter a valid email domain";
+  const tld = labels[labels.length - 1] || "";
+  if (!/^[a-z]{2,}$/i.test(tld)) return "Enter a valid email domain";
+  return null;
+};
+
 function Login({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -52,24 +67,16 @@ function Login({ onLogin }) {
   // -----------------------------
   // FRONTEND VALIDATION
   // -----------------------------
-  // Password validation (enterprise-grade)
+  // Login password validation (keep minimal; strict rules apply in registration/reset flows)
   const validatePassword = (pwd) => {
     if (!pwd || !pwd.trim()) return "Password is required";
-    if (pwd.length < 8) return "Password must be at least 8 characters";
     if (pwd.length > 128) return "Password cannot exceed 128 characters";
-    if (!/[A-Z]/.test(pwd)) return "Must include at least 1 uppercase letter";
-    if (!/[a-z]/.test(pwd)) return "Must include at least 1 lowercase letter";
-    if (!/[0-9]/.test(pwd)) return "Must include at least 1 number";
-    if (!/[!@#$%^&*(),.?":{}|<>\[\]\\/~`_+=;'\-]/.test(pwd)) return "Must include at least 1 special character";
-    // Reject common weak passwords
-    const weak = ["password", "password123", "12345678", "qwerty", "letmein", "admin", "welcome"];
-    if (weak.includes(pwd.toLowerCase())) return "Password is too weak";
     return null;
   };
 
   // Combined validation for login
   const validateLogin = () => {
-    const emailErr = validateEmail(email);
+    const emailErr = validateEmail(email) || validateEmailDomain(email);
     const pwdErr = validatePassword(password);
     setEmailError(emailErr || "");
     setPasswordError(pwdErr || "");
@@ -82,7 +89,7 @@ function Login({ onLogin }) {
   // SUBMIT
   // -----------------------------
   const handleEmailBlur = () => {
-    setEmailError(validateEmail(email) || "");
+    setEmailError(validateEmail(email) || validateEmailDomain(email) || "");
   };
 
   const handlePasswordBlur = () => {
@@ -172,15 +179,26 @@ function Login({ onLogin }) {
       }
 
       const msg =
-        err?.response?.data?.message ||
-        err?.response?.data?.detail ||
         (typeof err?.response?.data?.detail === "object"
           ? err?.response?.data?.detail?.message
           : null) ||
+        err?.response?.data?.message ||
+        (typeof err?.response?.data?.detail === "string"
+          ? err?.response?.data?.detail
+          : null) ||
         err?.message ||
         "Login failed - please try again";
-
-      setError(msg);
+      const detailField =
+        typeof err?.response?.data?.detail === "object"
+          ? err?.response?.data?.detail?.field
+          : null;
+      if (detailField === "email") {
+        setEmailError(msg);
+      } else if (detailField === "password") {
+        setPasswordError(msg);
+      } else {
+        setError(msg);
+      }
       setTimeout(() => errorRef.current?.focus?.(), 50);
     } finally {
       setLoading(false);
@@ -280,6 +298,7 @@ function Login({ onLogin }) {
                   onChange={(e) => {
                     setEmail(e.target.value);
                     if (emailError) setEmailError("");
+                    if (error) setError("");
                   }}
                   onBlur={handleEmailBlur}
                   className={`
@@ -311,6 +330,7 @@ function Login({ onLogin }) {
                     onChange={(e) => {
                       setPassword(e.target.value);
                       if (passwordError) setPasswordError("");
+                      if (error) setError("");
                     }}
                     onBlur={handlePasswordBlur}
                     className={`

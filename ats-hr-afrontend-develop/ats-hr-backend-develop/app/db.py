@@ -61,28 +61,107 @@ def init_db():
     ensure_system_notification_columns()
     ensure_activity_log_indexes()
     ensure_enterprise_audit_log_columns()
+    ensure_workflow_builder_schema()
+    ensure_system_settings_schema()
 
 
 def ensure_user_columns():
     """
-    Ensure critical columns exist in the users table for PostgreSQL.
+    Ensure critical columns exist in the users table.
     """
-    if not DATABASE_URL or not DATABASE_URL.startswith("postgres"):
+    if not DATABASE_URL:
         return
 
-    ddl = [
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS client_id VARCHAR",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_manager_id VARCHAR",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS company_name VARCHAR",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_failed_login_at TIMESTAMP NULL",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_locked_until TIMESTAMP NULL",
-    ]
+    if DATABASE_URL.startswith("postgres"):
+        ddl = [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS client_id VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_manager_id VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS company_name VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'active'",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id INTEGER",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_by VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS session_invalid_after TIMESTAMP NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_failed_login_at TIMESTAMP NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_locked_until TIMESTAMP NULL",
+            "UPDATE users SET tenant_id = COALESCE(tenant_id, client_id)",
+            "UPDATE users SET status = CASE WHEN status IS NULL OR status = '' THEN CASE WHEN is_active THEN 'active' ELSE 'inactive' END ELSE status END",
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)",
+            "CREATE INDEX IF NOT EXISTS idx_users_role_id ON users (role_id)",
+            "CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users (tenant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_users_status ON users (status)",
+        ]
 
-    with engine.begin() as conn:
-        for statement in ddl:
-            conn.execute(text(statement))
+        with engine.begin() as conn:
+            for statement in ddl:
+                conn.execute(text(statement))
+        return
+
+    if DATABASE_URL.startswith("sqlite"):
+        with engine.begin() as conn:
+            columns = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(users)")).fetchall()
+            }
+            ddl = []
+            if "client_id" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN client_id VARCHAR")
+            if "tenant_id" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN tenant_id VARCHAR")
+            if "must_change_password" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0")
+            if "account_manager_id" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN account_manager_id VARCHAR")
+            if "company_name" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN company_name VARCHAR")
+            if "first_name" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN first_name VARCHAR")
+            if "last_name" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN last_name VARCHAR")
+            if "phone" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN phone VARCHAR")
+            if "status" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN status VARCHAR DEFAULT 'active'")
+            if "role_id" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN role_id INTEGER")
+            if "last_login_at" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP")
+            if "created_by" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN created_by VARCHAR")
+            if "updated_by" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN updated_by VARCHAR")
+            if "updated_at" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN updated_at TIMESTAMP")
+            if "session_invalid_after" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN session_invalid_after TIMESTAMP")
+            if "failed_login_attempts" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0")
+            if "last_failed_login_at" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN last_failed_login_at TIMESTAMP")
+            if "account_locked_until" not in columns:
+                ddl.append("ALTER TABLE users ADD COLUMN account_locked_until TIMESTAMP")
+
+            for statement in ddl:
+                conn.execute(text(statement))
+
+            conn.execute(text("UPDATE users SET tenant_id = COALESCE(tenant_id, client_id)"))
+            conn.execute(
+                text(
+                    "UPDATE users SET status = CASE WHEN status IS NULL OR status = '' THEN CASE WHEN COALESCE(is_active, 1) = 1 THEN 'active' ELSE 'inactive' END ELSE status END"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_users_role_id ON users (role_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users (tenant_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_users_status ON users (status)"))
 
 
 def ensure_candidate_bulk_columns():
@@ -673,6 +752,10 @@ def ensure_candidate_resume_columns():
         "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS resume_path TEXT",
         "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS intake_status VARCHAR",
         "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS parsed_data_json JSONB",
+        "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS parsed_json JSONB",
+        "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS parsed_at TIMESTAMP",
+        "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS parser_version VARCHAR(50)",
+        "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS raw_text TEXT",
         "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS uploaded_by_recruiter_id VARCHAR",
     ]
 
@@ -722,3 +805,342 @@ def ensure_activity_log_indexes():
             except Exception:
                 # Keep startup non-blocking for partially-migrated environments.
                 pass
+
+
+def ensure_workflow_builder_schema():
+    """
+    Ensure workflow builder versioning/rules/runtime schema exists on legacy DBs.
+    """
+    if not DATABASE_URL:
+        return
+
+    dialect = engine.dialect.name
+
+    if DATABASE_URL.startswith("postgres"):
+        ddl = [
+            "ALTER TABLE workflows ADD COLUMN IF NOT EXISTS tenant_id VARCHAR",
+            "ALTER TABLE workflows ADD COLUMN IF NOT EXISTS department VARCHAR",
+            "ALTER TABLE workflows ADD COLUMN IF NOT EXISTS job_type VARCHAR",
+            "ALTER TABLE workflows ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'draft'",
+            "ALTER TABLE workflow_stages ADD COLUMN IF NOT EXISTS workflow_version_id VARCHAR",
+            "ALTER TABLE workflow_stages ADD COLUMN IF NOT EXISTS settings_json JSONB DEFAULT '{}'::jsonb",
+            """
+CREATE TABLE IF NOT EXISTS workflow_versions (
+    id VARCHAR PRIMARY KEY,
+    workflow_id VARCHAR NOT NULL,
+    version_no INTEGER NOT NULL DEFAULT 1,
+    status VARCHAR NOT NULL DEFAULT 'draft',
+    published_at TIMESTAMP NULL,
+    config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_by VARCHAR NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_version_no ON workflow_versions(workflow_id, version_no)",
+            """
+CREATE TABLE IF NOT EXISTS workflow_transitions (
+    id VARCHAR PRIMARY KEY,
+    workflow_version_id VARCHAR NOT NULL,
+    from_stage_id VARCHAR NOT NULL,
+    to_stage_id VARCHAR NOT NULL,
+    condition_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+            """
+CREATE TABLE IF NOT EXISTS workflow_rules (
+    id VARCHAR PRIMARY KEY,
+    workflow_version_id VARCHAR NOT NULL,
+    name VARCHAR NOT NULL,
+    trigger VARCHAR NOT NULL,
+    condition_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    action_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by VARCHAR NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+            """
+CREATE TABLE IF NOT EXISTS candidate_stage_history (
+    id VARCHAR PRIMARY KEY,
+    candidate_id VARCHAR NOT NULL,
+    job_id VARCHAR NULL,
+    workflow_version_id VARCHAR NULL,
+    from_stage_id VARCHAR NULL,
+    to_stage_id VARCHAR NOT NULL,
+    changed_by VARCHAR NULL,
+    changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    meta_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+            """
+CREATE TABLE IF NOT EXISTS candidate_stage_current (
+    id VARCHAR PRIMARY KEY,
+    candidate_id VARCHAR NOT NULL,
+    job_id VARCHAR NULL,
+    workflow_version_id VARCHAR NULL,
+    stage_id VARCHAR NOT NULL,
+    owner_user_id VARCHAR NULL,
+    entered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_candidate_stage_current_candidate_job ON candidate_stage_current(candidate_id, job_id)",
+            "CREATE INDEX IF NOT EXISTS idx_workflow_rules_version ON workflow_rules(workflow_version_id)",
+            "CREATE INDEX IF NOT EXISTS idx_workflow_stages_version ON workflow_stages(workflow_version_id)",
+            "CREATE INDEX IF NOT EXISTS idx_workflows_tenant_status ON workflows(tenant_id, status)",
+        ]
+        with engine.begin() as conn:
+            for statement in ddl:
+                try:
+                    conn.execute(text(statement))
+                except Exception:
+                    continue
+        return
+
+    if dialect == "sqlite":
+        with engine.begin() as conn:
+            try:
+                wf_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(workflows)")).fetchall()}
+                stage_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(workflow_stages)")).fetchall()}
+            except Exception:
+                return
+
+            if "tenant_id" not in wf_cols:
+                conn.execute(text("ALTER TABLE workflows ADD COLUMN tenant_id VARCHAR"))
+            if "department" not in wf_cols:
+                conn.execute(text("ALTER TABLE workflows ADD COLUMN department VARCHAR"))
+            if "job_type" not in wf_cols:
+                conn.execute(text("ALTER TABLE workflows ADD COLUMN job_type VARCHAR"))
+            if "status" not in wf_cols:
+                conn.execute(text("ALTER TABLE workflows ADD COLUMN status VARCHAR DEFAULT 'draft'"))
+
+            if "workflow_version_id" not in stage_cols:
+                conn.execute(text("ALTER TABLE workflow_stages ADD COLUMN workflow_version_id VARCHAR"))
+            if "settings_json" not in stage_cols:
+                conn.execute(text("ALTER TABLE workflow_stages ADD COLUMN settings_json JSON DEFAULT '{}'"))
+
+            sqlite_ddl = [
+                """
+CREATE TABLE IF NOT EXISTS workflow_versions (
+    id VARCHAR PRIMARY KEY,
+    workflow_id VARCHAR NOT NULL,
+    version_no INTEGER NOT NULL DEFAULT 1,
+    status VARCHAR NOT NULL DEFAULT 'draft',
+    published_at TIMESTAMP NULL,
+    config_json JSON NOT NULL DEFAULT '{}',
+    created_by VARCHAR NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_version_no ON workflow_versions(workflow_id, version_no)",
+                """
+CREATE TABLE IF NOT EXISTS workflow_transitions (
+    id VARCHAR PRIMARY KEY,
+    workflow_version_id VARCHAR NOT NULL,
+    from_stage_id VARCHAR NOT NULL,
+    to_stage_id VARCHAR NOT NULL,
+    condition_json JSON NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+                """
+CREATE TABLE IF NOT EXISTS workflow_rules (
+    id VARCHAR PRIMARY KEY,
+    workflow_version_id VARCHAR NOT NULL,
+    name VARCHAR NOT NULL,
+    trigger VARCHAR NOT NULL,
+    condition_json JSON NOT NULL DEFAULT '{}',
+    action_json JSON NOT NULL DEFAULT '{}',
+    is_active BOOLEAN NOT NULL DEFAULT 1,
+    created_by VARCHAR NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+                """
+CREATE TABLE IF NOT EXISTS candidate_stage_history (
+    id VARCHAR PRIMARY KEY,
+    candidate_id VARCHAR NOT NULL,
+    job_id VARCHAR NULL,
+    workflow_version_id VARCHAR NULL,
+    from_stage_id VARCHAR NULL,
+    to_stage_id VARCHAR NOT NULL,
+    changed_by VARCHAR NULL,
+    changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    meta_json JSON NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+                """
+CREATE TABLE IF NOT EXISTS candidate_stage_current (
+    id VARCHAR PRIMARY KEY,
+    candidate_id VARCHAR NOT NULL,
+    job_id VARCHAR NULL,
+    workflow_version_id VARCHAR NULL,
+    stage_id VARCHAR NOT NULL,
+    owner_user_id VARCHAR NULL,
+    entered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL
+)
+""",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_candidate_stage_current_candidate_job ON candidate_stage_current(candidate_id, job_id)",
+                "CREATE INDEX IF NOT EXISTS idx_workflow_rules_version ON workflow_rules(workflow_version_id)",
+                "CREATE INDEX IF NOT EXISTS idx_workflow_stages_version ON workflow_stages(workflow_version_id)",
+                "CREATE INDEX IF NOT EXISTS idx_workflows_tenant_status ON workflows(tenant_id, status)",
+            ]
+            for statement in sqlite_ddl:
+                try:
+                    conn.execute(text(statement))
+                except Exception:
+                    continue
+
+
+def ensure_system_settings_schema():
+    """
+    Ensure System Settings / Feature Flags schema supports global governance config.
+    """
+    if not DATABASE_URL:
+        return
+
+    default_settings = [
+        ("general.platform_name", "general", "string", "ATS-HR", "Platform display name", False, True),
+        ("general.support_email", "general", "string", "support@example.com", "Support email", False, True),
+        ("general.default_timezone", "general", "string", "Asia/Kolkata", "Default timezone", False, True),
+        ("auth.mfa_required_global", "security", "boolean", False, "Require MFA for all users", False, True),
+        ("auth.password_min_length", "security", "number", 8, "Minimum password length", False, True),
+        ("auth.password_require_special_char", "security", "boolean", True, "Require special char in password", False, True),
+        ("auth.session_timeout_minutes", "security", "number", 480, "Session timeout in minutes", False, True),
+        ("auth.ip_allowlist_global", "security", "json", [], "Global IP allowlist", False, True),
+        ("auth.allowed_login_methods", "security", "json", ["password"], "Allowed login methods", False, True),
+        ("email.provider", "email", "string", "smtp", "Email provider (smtp|sendgrid)", False, True),
+        ("email.from_name", "email", "string", "ATS-HR", "Email sender name", False, True),
+        ("email.from_address", "email", "string", "no-reply@example.com", "Email sender address", False, True),
+        ("email.smtp_config", "email", "json", {}, "SMTP configuration", True, True),
+        ("email.sendgrid_api_key", "email", "string", "", "SendGrid API key", True, True),
+        ("notify.enable_system_emails", "email", "boolean", True, "Enable system emails", False, True),
+        ("uploads.max_file_size_mb", "uploads", "number", 10, "Maximum upload file size (MB)", False, True),
+        ("uploads.allowed_extensions", "uploads", "json", [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"], "Allowed file extensions", False, True),
+        ("uploads.storage_provider", "uploads", "string", "local", "Storage provider", False, True),
+        ("uploads.s3_config", "uploads", "json", {}, "S3 configuration", True, True),
+        ("maintenance.enabled", "maintenance", "boolean", False, "Enable maintenance mode", False, True),
+        ("maintenance.message", "maintenance", "string", "Platform is under maintenance. Please try again later.", "Maintenance message", False, True),
+        ("rate_limit.api_rpm", "maintenance", "number", 120, "API requests per minute", False, True),
+        ("portal.default_theme", "portal", "string", "light", "Default portal theme", False, True),
+        ("portal.candidate_portal_enabled_default", "portal", "boolean", True, "Default candidate portal enabled", False, True),
+    ]
+
+    if DATABASE_URL.startswith("postgres"):
+        ddl = [
+            "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS key VARCHAR",
+            "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS value_json JSONB",
+            "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS value_type VARCHAR(20) DEFAULT 'json'",
+            "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS category VARCHAR(100)",
+            "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS is_secret BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS is_editable BOOLEAN DEFAULT TRUE",
+            "ALTER TABLE feature_flags ADD COLUMN IF NOT EXISTS key VARCHAR",
+            "ALTER TABLE feature_flags ADD COLUMN IF NOT EXISTS rollout_json JSONB DEFAULT '{}'::jsonb",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_system_settings_key ON system_settings (key)",
+            "CREATE INDEX IF NOT EXISTS idx_system_settings_category ON system_settings (category)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_feature_flags_key ON feature_flags (key)",
+        ]
+        with engine.begin() as conn:
+            for statement in ddl:
+                try:
+                    conn.execute(text(statement))
+                except Exception:
+                    continue
+
+            conn.execute(text("UPDATE system_settings SET key = module_name || '.' || setting_key WHERE key IS NULL AND module_name IS NOT NULL AND setting_key IS NOT NULL"))
+            conn.execute(text("UPDATE system_settings SET value_json = setting_value WHERE value_json IS NULL"))
+            conn.execute(text("UPDATE system_settings SET category = split_part(key, '.', 1) WHERE category IS NULL AND key LIKE '%.%'"))
+            conn.execute(text("UPDATE feature_flags SET key = flag_key WHERE key IS NULL AND flag_key IS NOT NULL"))
+
+            import json
+            for key, category, value_type, value, description, is_secret, is_editable in default_settings:
+                conn.execute(
+                    text(
+                        """
+INSERT INTO system_settings (id, key, value_json, value_type, category, description, is_secret, is_editable, module_name, setting_key, setting_value, updated_at)
+SELECT md5(random()::text || clock_timestamp()::text), :key, CAST(:value_json AS jsonb), :value_type, :category, :description, :is_secret, :is_editable,
+       split_part(:key, '.', 1), split_part(:key, '.', 2), CAST(:value_json AS jsonb), CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = :key)
+                        """
+                    ),
+                    {
+                        "key": key,
+                        "value_json": json.dumps(value),
+                        "value_type": value_type,
+                        "category": category,
+                        "description": description,
+                        "is_secret": is_secret,
+                        "is_editable": is_editable,
+                    },
+                )
+        return
+
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as conn:
+            cols = {row[1] for row in conn.execute(text("PRAGMA table_info(system_settings)")).fetchall()}
+            ff_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(feature_flags)")).fetchall()}
+
+            if "key" not in cols:
+                conn.execute(text("ALTER TABLE system_settings ADD COLUMN key VARCHAR"))
+            if "value_json" not in cols:
+                conn.execute(text("ALTER TABLE system_settings ADD COLUMN value_json JSON"))
+            if "value_type" not in cols:
+                conn.execute(text("ALTER TABLE system_settings ADD COLUMN value_type VARCHAR(20)"))
+            if "category" not in cols:
+                conn.execute(text("ALTER TABLE system_settings ADD COLUMN category VARCHAR(100)"))
+            if "is_secret" not in cols:
+                conn.execute(text("ALTER TABLE system_settings ADD COLUMN is_secret BOOLEAN DEFAULT 0"))
+            if "is_editable" not in cols:
+                conn.execute(text("ALTER TABLE system_settings ADD COLUMN is_editable BOOLEAN DEFAULT 1"))
+
+            if "key" not in ff_cols:
+                conn.execute(text("ALTER TABLE feature_flags ADD COLUMN key VARCHAR"))
+            if "rollout_json" not in ff_cols:
+                conn.execute(text("ALTER TABLE feature_flags ADD COLUMN rollout_json JSON"))
+
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_system_settings_key ON system_settings (key)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_system_settings_category ON system_settings (category)"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_feature_flags_key ON feature_flags (key)"))
+
+            conn.execute(text("UPDATE system_settings SET key = module_name || '.' || setting_key WHERE key IS NULL AND module_name IS NOT NULL AND setting_key IS NOT NULL"))
+            conn.execute(text("UPDATE system_settings SET value_json = setting_value WHERE value_json IS NULL"))
+            conn.execute(text("UPDATE system_settings SET category = substr(key, 1, instr(key, '.')-1) WHERE category IS NULL AND instr(key, '.') > 0"))
+            conn.execute(text("UPDATE feature_flags SET key = flag_key WHERE key IS NULL AND flag_key IS NOT NULL"))
+
+            import json
+            for key, category, value_type, value, description, is_secret, is_editable in default_settings:
+                exists = conn.execute(text("SELECT 1 FROM system_settings WHERE key = :key LIMIT 1"), {"key": key}).fetchone()
+                if exists:
+                    continue
+                conn.execute(
+                    text(
+                        """
+INSERT INTO system_settings (id, key, value_json, value_type, category, description, is_secret, is_editable, module_name, setting_key, setting_value, updated_at)
+VALUES (lower(hex(randomblob(16))), :key, :value_json, :value_type, :category, :description, :is_secret, :is_editable,
+        substr(:key, 1, instr(:key, '.')-1), substr(:key, instr(:key, '.')+1), :value_json, CURRENT_TIMESTAMP)
+                        """
+                    ),
+                    {
+                        "key": key,
+                        "value_json": json.dumps(value),
+                        "value_type": value_type,
+                        "category": category,
+                        "description": description,
+                        "is_secret": 1 if is_secret else 0,
+                        "is_editable": 1 if is_editable else 0,
+                    },
+                )

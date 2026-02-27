@@ -215,10 +215,30 @@ const ALL_AM_STATUSES = Array.from(
   new Set(AM_TABS.flatMap((tab) => tab.statuses.map((status) => normalizeStatus(status)))),
 );
 
-const LIST_REQUEST_TIMEOUT_MS = 15000;
+const LIST_REQUEST_TIMEOUT_MS = 30000;
 const PROFILE_HYDRATION_TIMEOUT_MS = 8000;
 const MAX_PROFILE_HYDRATION_REQUESTS = 60;
 const PROFILE_HYDRATION_BATCH_SIZE = 8;
+const IGNORED_FETCH_ERROR_STATUS_CODES = new Set([401, 403, 404, 405, 422]);
+const WORKFLOW_SUPPLEMENT_STATUSES = new Set([
+  "sent_to_client",
+  "client_shortlisted",
+  "client_hold",
+  "client_rejected",
+  "interview_scheduled",
+  "interview_completed",
+  "selected",
+  "negotiation",
+  "hired",
+]);
+
+const isTimeoutAxiosError = (error) => {
+  const message = String(error?.message || "").toLowerCase();
+  return error?.code === "ECONNABORTED" || message.includes("timeout");
+};
+
+const shouldSuppressFetchWarning = (error) =>
+  IGNORED_FETCH_ERROR_STATUS_CODES.has(error?.response?.status) || isTimeoutAxiosError(error);
 
 const normalizeId = (value) =>
   String(value || "")
@@ -1940,7 +1960,7 @@ export default function AMCandidateWorkflow() {
       await Promise.allSettled([
         api.get("/v1/am/requirements"),
         api.get("/v1/job-management/requirements", {
-          params: { skip: 0, limit: 500 },
+          params: { skip: 0, limit: 200 },
         }),
       ]);
 
@@ -2023,10 +2043,12 @@ export default function AMCandidateWorkflow() {
         try {
           response = await getWithTimeout(`/v1/jobs/${requirementId}/submissions`);
         } catch (genericErr) {
-          console.error(
-            `Failed to fetch submissions for requirement ${requirementId}:`,
-            genericErr,
-          );
+          if (!shouldSuppressFetchWarning(genericErr)) {
+            console.warn(
+              `Failed to fetch submissions for requirement ${requirementId}:`,
+              genericErr,
+            );
+          }
           continue;
         }
       }
@@ -2342,7 +2364,7 @@ export default function AMCandidateWorkflow() {
 
     try {
       const bulkResponse = await getWithTimeout("/workflow/candidates", {
-        params: { limit: 500 },
+        params: { limit: 200 },
       });
       const payloadList =
         bulkResponse?.data?.candidates ||
@@ -2354,8 +2376,7 @@ export default function AMCandidateWorkflow() {
         .map((workflowCandidate) => mapWorkflowCandidateToRecord(workflowCandidate))
         .filter(Boolean);
     } catch (bulkErr) {
-      const statusCode = bulkErr?.response?.status;
-      if (![401, 403, 404, 405, 422].includes(statusCode)) {
+      if (!shouldSuppressFetchWarning(bulkErr)) {
         console.warn("Failed to fetch workflow candidates in bulk:", bulkErr);
       }
     }
@@ -2364,7 +2385,7 @@ export default function AMCandidateWorkflow() {
     for (const status of normalizedStatuses) {
       try {
         const response = await getWithTimeout("/workflow/candidates", {
-          params: { status, limit: 500 },
+          params: { status, limit: 200 },
         });
         const payloadList =
           response?.data?.candidates ||
@@ -2379,8 +2400,7 @@ export default function AMCandidateWorkflow() {
           }
         });
       } catch (err) {
-        const statusCode = err?.response?.status;
-        if (![401, 403, 404, 405, 422].includes(statusCode)) {
+        if (!shouldSuppressFetchWarning(err)) {
           console.warn(`Failed to fetch workflow candidates for status "${status}"`, err);
         }
       }
@@ -2443,7 +2463,9 @@ export default function AMCandidateWorkflow() {
         ) {
           continue;
         }
-        console.warn(`Failed to fetch interviews from ${endpoint}:`, err);
+        if (!shouldSuppressFetchWarning(err)) {
+          console.warn(`Failed to fetch interviews from ${endpoint}:`, err);
+        }
       }
     }
 
@@ -2807,8 +2829,7 @@ export default function AMCandidateWorkflow() {
 
         candidateRecords.push(...mappedCandidates);
       } catch (submissionsError) {
-        const statusCode = submissionsError?.response?.status;
-        if (![401, 403, 404, 405, 422].includes(statusCode)) {
+        if (!shouldSuppressFetchWarning(submissionsError)) {
           console.warn(
             "AM submissions endpoint failed, loading requirement-wise submissions:",
             submissionsError,
@@ -2827,19 +2848,26 @@ export default function AMCandidateWorkflow() {
             : [];
 
       if (fallbackRequirementIds.length > 0) {
+        const requirementIdsToLoad =
+          selectedRequirementId !== "all"
+            ? fallbackRequirementIds
+            : fallbackRequirementIds.slice(0, 20);
         const requirementCandidates = await fetchCandidatesByRequirementIds(
-          fallbackRequirementIds,
-          ALL_AM_STATUSES,
+          requirementIdsToLoad,
+          activeStatuses,
         );
         candidateRecords.push(...requirementCandidates);
       }
 
-      // Always supplement from workflow status endpoint so AM view stays aligned
-      // with recruiter workflow (especially client/interview stages).
-      const workflowCandidates = await fetchWorkflowCandidatesByStatuses(
-        ALL_AM_STATUSES,
-      );
-      candidateRecords.push(...workflowCandidates);
+      // Supplement from workflow status endpoint only when the active tab needs it
+      // or when primary sources returned no rows.
+      const shouldFetchWorkflowSupplement =
+        candidateRecords.length === 0 ||
+        activeStatuses.some((status) => WORKFLOW_SUPPLEMENT_STATUSES.has(status));
+      if (shouldFetchWorkflowSupplement) {
+        const workflowCandidates = await fetchWorkflowCandidatesByStatuses(activeStatuses);
+        candidateRecords.push(...workflowCandidates);
+      }
 
       if (candidateRecords.length > 0) {
         const enrichedCandidates = await enrichCandidatesFromProfile(candidateRecords);
@@ -2852,7 +2880,7 @@ export default function AMCandidateWorkflow() {
       // Last fallback to generic workflow endpoint if status-wise requests failed.
       try {
         const genericWorkflowRes = await getWithTimeout("/workflow/candidates", {
-          params: { limit: 500 },
+          params: { limit: 200 },
         });
         const genericWorkflowList = Array.isArray(genericWorkflowRes?.data?.candidates)
           ? genericWorkflowRes.data.candidates
@@ -2866,7 +2894,9 @@ export default function AMCandidateWorkflow() {
           applyDataset(statusAwareFallbackCandidates);
         }
       } catch (workflowFallbackErr) {
-        console.warn("Workflow fallback endpoint failed:", workflowFallbackErr);
+        if (!shouldSuppressFetchWarning(workflowFallbackErr)) {
+          console.warn("Workflow fallback endpoint failed:", workflowFallbackErr);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch candidates:", err);

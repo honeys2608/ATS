@@ -1598,7 +1598,7 @@ export default function CandidateProfileAdmin() {
           onSendToAM={() => sendToAccountManager(detailCandidate)}
           onUpdateStatus={updateCandidateStatus}
           workflowStatusOptions={statusOptions}
-          hideQuickActions={viewOnlyMode}
+          hideQuickActions={false}
           hideStatusControls
           hideFeedbackSection
           hideSendToAMAction

@@ -496,7 +496,7 @@ export default function InterviewManagement() {
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                   >
                     <option value="ai_chat">AI Chat Interview</option>
-                    <option value="video">Video Interview</option>
+                    <option value="video">Online Meeting (Meet/Teams/Zoom)</option>
                     <option value="in_person">In-Person Interview</option>
                   </select>
                 </div>
@@ -522,7 +522,7 @@ export default function InterviewManagement() {
                 {formData.interview_type === "video" && (
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Meeting Link
+                      Online Meeting Link
                     </label>
                     <input
                       type="url"
@@ -534,7 +534,7 @@ export default function InterviewManagement() {
                         })
                       }
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                      placeholder="https://meet.google.com/..."
+                      placeholder="https://meet.google.com/... or https://teams.microsoft.com/..."
                     />
                   </div>
                 )}

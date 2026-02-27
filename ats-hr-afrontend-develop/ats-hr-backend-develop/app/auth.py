@@ -13,6 +13,7 @@ from app.validators import validate_email, validate_password
 from app.services.audit_service import log_audit, map_audit_severity
 from app.utils.activity import log_activity
 from app.services.audit_service import log_audit, map_audit_severity
+from app.permissions import get_user_permissions
 
 # â¬‡ï¸ optional but useful for role separation frontend
 from app.utils.role_check import allow_user, allow_candidate
@@ -28,6 +29,28 @@ candidate_registration_otps = {}
 SECRET_KEY = os.getenv("SESSION_SECRET", "akshu-hr-secret-key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hrs
+
+
+def _get_system_setting_value(db: Session, key: str, default=None):
+    row = (
+        db.query(models.SystemSettings)
+        .filter(
+            (models.SystemSettings.config_key == key)
+            | (
+                (models.SystemSettings.module_name == key.split(".", 1)[0])
+                & (models.SystemSettings.setting_key == key.split(".", 1)[1] if "." in key else key)
+            )
+        )
+        .order_by(models.SystemSettings.updated_at.desc())
+        .first()
+    )
+    if not row:
+        return default
+    if row.value_json is not None:
+        return row.value_json
+    if row.setting_value is not None:
+        return row.setting_value
+    return default
 
 
 def _request_meta(request: Request) -> tuple[Optional[str], Optional[str]]:
@@ -58,7 +81,7 @@ def verify_password(password: str, stored: str):
 # =====================================================================
 def create_access_token(data: dict):
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    data.update({"exp": expire})
+    data.update({"exp": expire, "iat": datetime.utcnow()})
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -77,6 +100,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     uid = payload.get("sub")
     role = payload.get("role")
     utype = payload.get("type", "user")   # default admin side
+    token_iat = payload.get("iat")
 
     if not uid:
         raise HTTPException(401, "Invalid token: missing user ID")
@@ -100,6 +124,16 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     if not user:
         raise HTTPException(401, "User not found")
 
+    if token_iat and getattr(user, "session_invalid_after", None):
+        try:
+            token_iat_dt = datetime.utcfromtimestamp(float(token_iat))
+            if token_iat_dt < user.session_invalid_after:
+                raise HTTPException(401, "Session expired. Please login again.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
     # ðŸ”¥ allow admin even if inactive; only block when explicitly set False
     if user.is_active is False and user.role not in ["admin", "super_admin"]:
         raise HTTPException(403, "User account is locked")
@@ -116,6 +150,15 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
     ip_addr = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
+
+    min_length = int(_get_system_setting_value(db, "auth.password_min_length", 8) or 8)
+    mfa_required = bool(_get_system_setting_value(db, "auth.mfa_required_global", False))
+
+    if data.password and len(data.password) < min_length:
+        raise HTTPException(400, detail={"field": "password", "message": f"Password must be at least {min_length} characters"})
+
+    if mfa_required and not data.otp:
+        raise HTTPException(403, detail={"field": "otp", "message": "MFA is required. Provide OTP to continue."})
 
     valid_email, email_err = validate_email(data.email)
     if not valid_email:
@@ -266,12 +309,12 @@ def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(ge
                     status="failed",
                     ip_address=ip_addr,
                     user_agent=ua,
-                    message="Account locked due to multiple failed attempts" if locked_now else "Invalid email or password",
+                    message="Account locked due to multiple failed attempts" if locked_now else "Incorrect password",
                 )
             )
             db.commit()
             action = "ACCOUNT_LOCKED" if locked_now else "USER_LOGIN_FAILED"
-            reason = "Account locked due to multiple failed attempts" if locked_now else "Invalid email or password"
+            reason = "Account locked due to multiple failed attempts" if locked_now else "Incorrect password"
             code = 403 if locked_now else 401
             log_audit(
                 actor={"id": user.id, "email": user.email, "role": user.role, "name": user.full_name or user.username, "client_id": user.client_id},
@@ -290,12 +333,16 @@ def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(ge
                 ip_address=ip_addr,
                 user_agent=ua,
             )
-            raise HTTPException(code, detail={"field": "general", "message": reason if locked_now else "Invalid email or password"})
+            raise HTTPException(code, detail={"field": "general" if locked_now else "password", "message": reason})
 
         if hasattr(user, "failed_login_attempts"):
             user.failed_login_attempts = 0
         if hasattr(user, "account_locked_until"):
             user.account_locked_until = None
+        if hasattr(user, "last_login_at"):
+            user.last_login_at = now
+        if hasattr(user, "status"):
+            user.status = "active"
         db.add(user)
         db.add(
             models.LoginLog(
@@ -341,6 +388,7 @@ def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(ge
             "token_type": "bearer",
             "type": "user",
             "role": user.role,
+            "permissions": get_user_permissions(user.role),
             "user_id": user.id,
             "client_id": user.client_id,
         }
@@ -354,7 +402,7 @@ def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(ge
                 status="failed",
                 ip_address=ip_addr,
                 user_agent=ua,
-                message="Invalid email or password",
+                message="Incorrect password",
             )
         )
         db.commit()
@@ -368,14 +416,14 @@ def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(ge
             entity_name=candidate.full_name or candidate.email,
             status="failed",
             severity=map_audit_severity(action="USER_LOGIN_FAILED", status="failed"),
-            failure_reason="Invalid email or password",
+            failure_reason="Incorrect password",
             endpoint=str(request.url.path),
             http_method=request.method,
             response_code=401,
             ip_address=ip_addr,
             user_agent=ua,
         )
-        raise HTTPException(401, detail={"field": "general", "message": "Invalid email or password"})
+        raise HTTPException(401, detail={"field": "password", "message": "Incorrect password"})
 
     token = create_access_token({"sub": candidate.id, "email": candidate.email, "role": "candidate", "type": "candidate"})
     db.add(
@@ -421,6 +469,7 @@ def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(ge
         "token_type": "bearer",
         "type": "candidate",
         "role": "candidate",
+        "permissions": get_user_permissions("candidate"),
         "user": {
             "id": candidate.id,
             "email": candidate.email,

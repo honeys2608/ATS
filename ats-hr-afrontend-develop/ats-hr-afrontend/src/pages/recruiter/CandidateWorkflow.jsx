@@ -584,13 +584,7 @@ const canRecruiterScheduleInterview = (candidate = {}, currentUserId = "") => {
         nestedCandidate?.interview_scheduling_ready,
       ),
     );
-    const schedulingNote = String(
-      pickDisplayValue(
-        candidate?.interview_scheduling_note,
-        nestedCandidate?.interview_scheduling_note,
-      ) || "",
-    ).trim();
-    if (!schedulingReady || !schedulingNote) return false;
+    if (!schedulingReady) return false;
   }
 
   const assignedRecruiterId = getAssignedRecruiterId(candidate);
@@ -1000,6 +994,14 @@ function CandidateCard({
     candidate?.experience,
     candidate?.total_experience,
   );
+  const schedulingNote = String(
+    pickDisplayValue(
+      candidate?.interview_scheduling_note,
+      candidate?.candidate?.interview_scheduling_note,
+      candidate?.candidate_details?.interview_scheduling_note,
+      "",
+    ),
+  ).trim();
 
   return (
     <div
@@ -1607,7 +1609,9 @@ export default function CandidateWorkflow() {
       return;
     }
     if (scheduleType === "video" && !meetingLink.trim()) {
-      setScheduleError("Meeting link is required for Google Meet.");
+      setScheduleError(
+        "Online meeting link is required (Google Meet, Teams, Zoom, etc.).",
+      );
       return;
     }
     if (scheduleType === "in_person" && !location.trim()) {
@@ -2180,6 +2184,15 @@ export default function CandidateWorkflow() {
         </div>
       )}
 
+      {status === "client_shortlisted" && schedulingNote && (
+        <div className="mb-4 rounded-md border border-violet-200 bg-violet-50 px-3 py-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
+            AM Note
+          </p>
+          <p className="mt-1 text-sm text-violet-900">{schedulingNote}</p>
+        </div>
+      )}
+
       {timelineOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-2xl max-h-[80vh] bg-white dark:bg-gray-800 rounded-xl shadow-2xl flex flex-col">
@@ -2330,7 +2343,7 @@ export default function CandidateWorkflow() {
                     className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   >
                     <option value="ai_chat">AI Chat Interview</option>
-                    <option value="video">Google Meet</option>
+                    <option value="video">Online Meeting (Meet/Teams/Zoom)</option>
                     <option value="in_person">In-Person</option>
                   </select>
                 </div>
@@ -2349,13 +2362,13 @@ export default function CandidateWorkflow() {
                 {scheduleType === "video" && (
                   <div className="sm:col-span-2">
                     <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      Meet Link
+                      Online Meeting Link
                     </label>
                     <input
                       type="url"
                       value={meetingLink}
                       onChange={(event) => setMeetingLink(event.target.value)}
-                      placeholder="https://meet.google.com/..."
+                      placeholder="https://meet.google.com/... or https://teams.microsoft.com/..."
                       className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                     />
                   </div>
@@ -2411,6 +2424,12 @@ export default function CandidateWorkflow() {
           candidate={detailCandidate}
           profile={detailProfile}
           loading={detailLoading}
+          contextNote={pickDisplayValue(
+            detailCandidate?.interview_scheduling_note,
+            detailCandidate?.candidate?.interview_scheduling_note,
+            detailProfile?.interview_scheduling_note,
+            detailProfile?.candidate?.interview_scheduling_note,
+          )}
           hideQuickActions={!detailCanScheduleInterview}
           customQuickActions={
             detailCanScheduleInterview

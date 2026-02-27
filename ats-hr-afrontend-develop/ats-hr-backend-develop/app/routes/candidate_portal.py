@@ -10,7 +10,8 @@ import os
 from app.db import get_db
 from app import models, schemas
 from app.auth import get_current_user
-from app.ai_core import parse_resume, generate_candidate_embedding
+from app.ai_core import generate_candidate_embedding
+from app.resume_parser import parse_resume as parse_resume_file
 from app.resume_parser.text_extractor import extract_text_from_file, clean_extracted_text
 from app.models import Notification
 from app.schemas import NotificationResponse
@@ -141,7 +142,10 @@ def parse_resume_only(
             text = file_bytes.decode("latin-1", "ignore")
     text = clean_extracted_text(text)
 
-    parsed = parse_resume(text) or {}
+    parsed_result = parse_resume_file(filepath) or {}
+    parsed = parsed_result.get("data") if isinstance(parsed_result, dict) else {}
+    if not isinstance(parsed, dict):
+        parsed = {}
 
     return {
         "message": "Resume parsed successfully",
@@ -432,7 +436,10 @@ def upload_resume(
             text = file_bytes.decode("latin-1", "ignore")
     text = clean_extracted_text(text)
 
-    parsed = parse_resume(text) or {}
+    parsed_result = parse_resume_file(filepath) or {}
+    parsed = parsed_result.get("data") if isinstance(parsed_result, dict) else {}
+    if not isinstance(parsed, dict):
+        parsed = {}
 
     # ---- VERSIONING ONLY ----
     history = cand.resume_versions or []

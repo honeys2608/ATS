@@ -2,33 +2,23 @@ import React, { useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
-  Building2,
   Users,
   ShieldCheck,
   Settings,
-  BarChart3,
-  Wallet,
   FileText,
-  Activity,
   SlidersHorizontal,
   LineChart,
   GitBranch,
-  Languages,
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { label: "Dashboard", to: "/super-admin/dashboard", icon: LayoutDashboard },
   { label: "Business Setup", to: "/super-admin/business-setup", icon: SlidersHorizontal },
-  { label: "Clients & Tenants", to: "/super-admin/clients", icon: Building2 },
   { label: "Admin Management", to: "/super-admin/admin-management", icon: Users },
   { label: "Roles & Permissions", to: "/super-admin/roles-permissions", icon: ShieldCheck },
   { label: "Tracker Metrics", to: "/super-admin/tracker-dashboard", icon: LineChart },
   { label: "Workflow Builder", to: "/super-admin/workflow-builder", icon: GitBranch },
-  { label: "Nomenclature", to: "/super-admin/nomenclature", icon: Languages },
-  { label: "User Management", to: "/super-admin/users", icon: Users },
-  { label: "Operations Analytics", to: "/super-admin/operations-analytics", icon: BarChart3 },
-  { label: "Finance & Billing", to: "/super-admin/finance-billing", icon: Wallet },
-  { label: "Compliance & Security", to: "/super-admin/compliance-security", icon: Activity },
+  { label: "User Management", to: "/super-admin/user-management/users", icon: Users },
   { label: "System Settings", to: "/super-admin/system-settings", icon: Settings },
   { label: "Audit Logs", to: "/super-admin/audit-logs", icon: FileText },
 ];
@@ -36,16 +26,11 @@ const NAV_ITEMS = [
 const titleMap = {
   "/super-admin/dashboard": "Super Admin Dashboard",
   "/super-admin/business-setup": "Business Setup",
-  "/super-admin/clients": "Clients & Tenants",
   "/super-admin/admin-management": "Admin Management",
   "/super-admin/roles-permissions": "Roles & Permissions",
   "/super-admin/tracker-dashboard": "Tracker Metrics",
   "/super-admin/workflow-builder": "Workflow Builder",
-  "/super-admin/nomenclature": "Nomenclature Manager",
-  "/super-admin/users": "User Management",
-  "/super-admin/operations-analytics": "Operations Analytics",
-  "/super-admin/finance-billing": "Finance & Billing",
-  "/super-admin/compliance-security": "Compliance & Security",
+  "/super-admin/user-management/users": "User Management",
   "/super-admin/system-settings": "System Settings",
   "/super-admin/audit-logs": "Audit Logs",
 };

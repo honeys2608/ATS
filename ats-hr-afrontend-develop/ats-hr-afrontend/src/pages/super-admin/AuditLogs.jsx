@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import AuditHeader from "./audit-logs/AuditHeader";
 import AuditSummaryCards from "./audit-logs/AuditSummaryCards";
 import AuditFiltersBar from "./audit-logs/AuditFiltersBar";
@@ -110,6 +111,7 @@ function buildCsv(rows) {
 }
 
 export default function AuditLogs() {
+  const [searchParams] = useSearchParams();
   const [rows, setRows] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -127,6 +129,15 @@ export default function AuditLogs() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [sortBy, setSortBy] = useState("time");
   const [sortDir, setSortDir] = useState("desc");
+
+  useEffect(() => {
+    const userId = text(searchParams.get("user_id"));
+    if (userId) {
+      setDraft((prev) => ({ ...prev, user_id: userId }));
+      setFilters((prev) => ({ ...prev, user_id: userId }));
+      setPage(1);
+    }
+  }, [searchParams]);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);

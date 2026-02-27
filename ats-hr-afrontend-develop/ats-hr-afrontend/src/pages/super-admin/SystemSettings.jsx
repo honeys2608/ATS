@@ -1,177 +1,292 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import api from "../../api/axios";
-import {
-  normalizeText,
-  validateDescription,
-  validateFeatureName,
-} from "../../utils/recruiterValidations";
+
+const TABS = [
+  { key: "general", label: "General", route: "/super-admin/system-settings/general" },
+  { key: "security", label: "Security", route: "/super-admin/system-settings/security" },
+  { key: "email", label: "Email", route: "/super-admin/system-settings/email" },
+  { key: "uploads", label: "Uploads", route: "/super-admin/system-settings/uploads" },
+  { key: "feature-flags", label: "Feature Flags", route: "/super-admin/system-settings/feature-flags" },
+  { key: "maintenance", label: "Maintenance", route: "/super-admin/system-settings/maintenance" },
+  { key: "audit-logs", label: "Audit Logs", route: "/super-admin/system-settings/audit-logs" },
+];
+
+const CATEGORY_MAP = {
+  general: "general",
+  security: "security",
+  email: "email",
+  uploads: "uploads",
+  maintenance: "maintenance",
+};
+
+function parseTab(pathname) {
+  const found = TABS.find((t) => pathname.startsWith(t.route));
+  if (found) return found.key;
+  return "general";
+}
+
+function renderInput(item, value, onChange) {
+  const vType = (item.value_type || "string").toLowerCase();
+  const disabled = item.is_editable === false;
+
+  if (vType === "boolean") {
+    return (
+      <label className="inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+        <span>{Boolean(value) ? "Enabled" : "Disabled"}</span>
+      </label>
+    );
+  }
+
+  if (vType === "number") {
+    return (
+      <input
+        type="number"
+        value={value ?? ""}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value || 0))}
+        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+      />
+    );
+  }
+
+  if (vType === "json") {
+    return (
+      <textarea
+        value={typeof value === "string" ? value : JSON.stringify(value ?? {}, null, 2)}
+        disabled={disabled}
+        onChange={(e) => {
+          try {
+            onChange(JSON.parse(e.target.value));
+          } catch {
+            onChange(e.target.value);
+          }
+        }}
+        className="min-h-[120px] w-full rounded border border-slate-300 px-3 py-2 text-xs font-mono"
+      />
+    );
+  }
+
+  if (item.is_secret) {
+    return (
+      <input
+        type="password"
+        placeholder="Set new secret"
+        value={value ?? ""}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+      />
+    );
+  }
+
+  return (
+    <input
+      type="text"
+      value={value ?? ""}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+    />
+  );
+}
 
 export default function SystemSettings() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const tab = useMemo(() => parseTab(location.pathname), [location.pathname]);
+
+  const [settings, setSettings] = useState([]);
+  const [drafts, setDrafts] = useState({});
   const [flags, setFlags] = useState([]);
-  const [busyKey, setBusyKey] = useState("");
+  const [audit, setAudit] = useState([]);
   const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api
-      .get("/v1/super-admin/feature-flags")
-      .then((res) => {
-        const rows = Array.isArray(res.data) ? res.data : [];
-        setFlags(
-          rows.map((row) => ({
-            key: normalizeText(row.key),
-            enabled: Boolean(row.enabled),
-            description: normalizeText(row.description || ""),
-            isDirty: false,
-          })),
-        );
-      })
-      .catch(() => setFlags([]));
-  }, []);
+    if (location.pathname === "/super-admin/system-settings") {
+      navigate("/super-admin/system-settings/general", { replace: true });
+    }
+  }, [location.pathname, navigate]);
 
-  const dirtyCount = useMemo(() => flags.filter((f) => f.isDirty).length, [flags]);
-
-  const onToggleFlag = (flagKey) => {
+  useEffect(() => {
     setMessage("");
-    setFlags((prev) =>
-      prev.map((flag) =>
-        flag.key === flagKey
-          ? { ...flag, enabled: !flag.enabled, isDirty: true }
-          : flag,
-      ),
-    );
-  };
-
-  const onSaveFlag = async (flag) => {
-    const trimmedKey = normalizeText(flag.key);
-    const trimmedDescription = normalizeText(flag.description);
-    const featureError = validateFeatureName(trimmedKey, "Feature name", {
-      pattern: /^[A-Za-z0-9_. -]+$/,
-      patternMessage:
-        "Feature name can only contain letters, numbers, spaces, underscores, hyphens, and dots.",
-    });
-    if (featureError) {
-      setMessage(featureError);
+    if (tab === "feature-flags") {
+      api.get("/v1/super-admin/feature-flags").then((res) => setFlags(res.data?.items || [])).catch(() => setFlags([]));
       return;
     }
-    const descriptionError = validateDescription(trimmedDescription, {
-      minLength: 20,
-      required: true,
-    });
-    if (descriptionError) {
-      setMessage(descriptionError);
-      return;
-    }
-    const duplicateFeatureName = flags.some(
-      (item) =>
-        item.key !== flag.key &&
-        normalizeText(item.key).toLowerCase() === trimmedKey.toLowerCase(),
-    );
-    if (duplicateFeatureName) {
-      setMessage("Duplicate Feature name under the same Sub-Category is not allowed.");
+    if (tab === "audit-logs") {
+      api.get("/v1/super-admin/system-settings/audit").then((res) => setAudit(res.data?.items || [])).catch(() => setAudit([]));
       return;
     }
 
-    setBusyKey(flag.key);
+    const category = CATEGORY_MAP[tab] || "general";
+    api
+      .get("/v1/super-admin/system-settings", { params: { category } })
+      .then((res) => {
+        const rows = res.data?.items || [];
+        setSettings(rows);
+        const next = {};
+        rows.forEach((r) => {
+          next[r.key] = r.value;
+        });
+        setDrafts(next);
+      })
+      .catch(() => {
+        setSettings([]);
+        setDrafts({});
+      });
+  }, [tab]);
+
+  const saveCategorySettings = async () => {
+    setSaving(true);
     setMessage("");
     try {
-      await api.put("/v1/super-admin/feature-flags", {
-        key: trimmedKey,
-        enabled: Boolean(flag.enabled),
-        description: trimmedDescription || null,
-      });
-      setFlags((prev) =>
-        prev.map((row) =>
-          row.key === flag.key
-            ? { ...row, key: trimmedKey, description: trimmedDescription, isDirty: false }
-            : row,
-        ),
-      );
-      setMessage(`Saved ${flag.key}`);
-    } catch (_error) {
-      setMessage(`Failed to save ${flag.key}`);
+      const updates = settings.map((item) => ({ key: item.key, value: drafts[item.key], value_type: item.value_type, category: item.category, is_secret: item.is_secret }));
+      await api.put("/v1/super-admin/system-settings", { updates });
+      setMessage("Settings saved");
+    } catch (e) {
+      setMessage(e?.response?.data?.detail || "Failed to save settings");
     } finally {
-      setBusyKey("");
+      setSaving(false);
+    }
+  };
+
+  const saveMaintenance = async () => {
+    setSaving(true);
+    setMessage("");
+    try {
+      await api.put("/v1/super-admin/maintenance", {
+        enabled: Boolean(drafts["maintenance.enabled"]),
+        message: drafts["maintenance.message"],
+        api_rpm: Number(drafts["rate_limit.api_rpm"] || 0),
+      });
+      setMessage("Maintenance settings saved");
+    } catch (e) {
+      setMessage(e?.response?.data?.detail || "Failed to save maintenance settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveFlag = async (flagKey, payload) => {
+    setSaving(true);
+    setMessage("");
+    try {
+      await api.put(`/v1/super-admin/feature-flags/${encodeURIComponent(flagKey)}`, payload);
+      const res = await api.get("/v1/super-admin/feature-flags");
+      setFlags(res.data?.items || []);
+      setMessage(`Feature flag saved: ${flagKey}`);
+    } catch (e) {
+      setMessage(e?.response?.data?.detail || `Failed to save ${flagKey}`);
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-slate-500">Control feature flags and platform configuration.</div>
-        <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-          Dirty Flags: {dirtyCount}
-        </div>
+      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
+        {TABS.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => navigate(item.route)}
+            className={`rounded-md px-3 py-2 text-sm font-semibold ${tab === item.key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
-      {message && (
-        <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-          {message}
+      {message && <div className="rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">{message}</div>}
+
+      {tab === "feature-flags" && (
+        <div className="space-y-3">
+          {flags.map((flag) => (
+            <div key={flag.key} className="rounded-lg border border-slate-200 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="font-semibold text-slate-900">{flag.key}</div>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(flag.enabled)}
+                    onChange={(e) => {
+                      const enabled = e.target.checked;
+                      setFlags((prev) => prev.map((f) => (f.key === flag.key ? { ...f, enabled } : f)));
+                    }}
+                  />
+                  {flag.enabled ? "Enabled" : "Disabled"}
+                </label>
+              </div>
+              <textarea
+                value={flag.description || ""}
+                onChange={(e) => {
+                  const description = e.target.value;
+                  setFlags((prev) => prev.map((f) => (f.key === flag.key ? { ...f, description } : f)));
+                }}
+                className="mb-2 min-h-[72px] w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Description"
+              />
+              <button type="button" onClick={() => saveFlag(flag.key, flag)} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white" disabled={saving}>
+                Save Flag
+              </button>
+            </div>
+          ))}
+          {flags.length === 0 && <p className="text-sm text-slate-500">No feature flags found.</p>}
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3">
-        {flags.map((flag) => {
-          const isBusy = busyKey === flag.key;
-          return (
-            <div
-              key={flag.key}
-              className="flex items-center justify-between rounded-lg border border-slate-200 p-4"
-            >
-              <div>
-                <div className="font-medium text-slate-900">{flag.key}</div>
-                <input
-                  value={flag.description}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    setFlags((prev) =>
-                      prev.map((item) =>
-                        item.key === flag.key
-                          ? { ...item, description: nextValue, isDirty: true }
-                          : item,
-                      ),
-                    );
-                    setMessage("");
-                  }}
-                  onBlur={(event) => {
-                    const nextValue = normalizeText(event.target.value);
-                    setFlags((prev) =>
-                      prev.map((item) =>
-                        item.key === flag.key
-                          ? { ...item, description: nextValue, isDirty: true }
-                          : item,
-                      ),
-                    );
-                  }}
-                  placeholder="Feature description (min 20 chars)"
-                  className="mt-1 w-80 max-w-full rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => onToggleFlag(flag.key)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-semibold ${
-                    flag.enabled
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-slate-100 text-slate-700"
-                  }`}
-                >
-                  {flag.enabled ? "Enabled" : "Disabled"}
-                </button>
-                <button
-                  disabled={isBusy || !flag.isDirty}
-                  onClick={() => onSaveFlag(flag)}
-                  className="rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                >
-                  {isBusy ? "Saving..." : "Save"}
-                </button>
-              </div>
+      {tab === "audit-logs" && (
+        <div className="overflow-auto rounded-lg border border-slate-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-100 text-slate-700">
+              <tr>
+                <th className="px-3 py-2 text-left">When</th>
+                <th className="px-3 py-2 text-left">Actor</th>
+                <th className="px-3 py-2 text-left">Action</th>
+                <th className="px-3 py-2 text-left">Before</th>
+                <th className="px-3 py-2 text-left">After</th>
+              </tr>
+            </thead>
+            <tbody>
+              {audit.map((row) => (
+                <tr key={row.id} className="border-t border-slate-100">
+                  <td className="px-3 py-2">{row.created_at || "-"}</td>
+                  <td className="px-3 py-2">{row.actor_name || row.actor_id || "-"}</td>
+                  <td className="px-3 py-2">{row.action || "-"}</td>
+                  <td className="px-3 py-2 text-xs">{row.before_json ? JSON.stringify(row.before_json) : "-"}</td>
+                  <td className="px-3 py-2 text-xs">{row.after_json ? JSON.stringify(row.after_json) : "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {audit.length === 0 && <p className="p-3 text-sm text-slate-500">No audit logs found.</p>}
+        </div>
+      )}
+
+      {!["feature-flags", "audit-logs"].includes(tab) && (
+        <div className="space-y-3">
+          {settings.map((item) => (
+            <div key={item.key} className="rounded-lg border border-slate-200 p-4">
+              <div className="mb-1 text-sm font-semibold text-slate-900">{item.key}</div>
+              <div className="mb-2 text-xs text-slate-500">{item.description || "-"}</div>
+              {renderInput(item, drafts[item.key], (value) => setDrafts((prev) => ({ ...prev, [item.key]: value })))}
             </div>
-          );
-        })}
-        {flags.length === 0 && (
-          <div className="text-sm text-slate-500">No feature flags configured.</div>
-        )}
-      </div>
+          ))}
+          {settings.length === 0 && <p className="text-sm text-slate-500">No settings found in this category.</p>}
+
+          <button
+            type="button"
+            onClick={tab === "maintenance" ? saveMaintenance : saveCategorySettings}
+            className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            disabled={saving}
+          >
+            {saving ? "Saving..." : "Save Settings"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

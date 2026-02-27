@@ -1,13 +1,47 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
+import api from "../../api/axios";
 import SearchFiltersPanel from "../../components/semantic-search/SearchFiltersPanel";
 import CandidateResultsList from "../../components/semantic-search/CandidateResultsList";
+import CandidateDetail from "../../components/candidate-profile/CandidateDetail";
+import CallFeedbackDrawer from "../../components/call-feedback/CallFeedbackDrawer";
+import CustomMessagePanel from "../../components/semantic-search/CustomMessagePanel";
 import { SemanticSearchEngine } from "../../services/SemanticSearchEngine";
 import candidateService from "../../services/candidateService";
+import {
+  getCandidateApiId,
+  mapCandidateToProfile,
+} from "../../utils/candidateProfileUtils";
 import "./AdvancedSearch.css";
 
 const searchEngine = new SemanticSearchEngine();
 const CANDIDATE_LIMIT = 200;
+const QUICK_ACTION_LOCKED_STATUSES = new Set([
+  "interview_scheduled",
+  "interview_completed",
+  "selected",
+  "negotiation",
+  "offer_extended",
+  "offer_accepted",
+  "offer_declined",
+  "hired",
+  "joined",
+  "rejected",
+  "client_rejected",
+]);
+const QUICK_ACTION_LOCKED_STATUS_MESSAGES = {
+  interview_scheduled: "Actions disabled: interview already scheduled",
+  interview_completed: "Actions disabled: interview already completed",
+  selected: "Actions disabled: candidate already selected",
+  negotiation: "Actions disabled: candidate is in negotiation stage",
+  offer_extended: "Actions disabled: offer already extended",
+  offer_accepted: "Actions disabled: offer already accepted",
+  offer_declined: "Actions disabled: offer already declined",
+  hired: "Actions disabled: candidate already hired",
+  joined: "Actions disabled: candidate already joined",
+  rejected: "Actions disabled: candidate already rejected",
+  client_rejected: "Actions disabled: candidate already rejected by client",
+};
 
 const toNumber = (value) => {
   const parsed = Number(String(value ?? "").replace(/[^0-9.]/g, ""));
@@ -72,7 +106,6 @@ const toErrorText = (error, fallback = "Unable to load candidates for semantic s
 };
 
 export default function AdvancedSearch() {
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [allCandidates, setAllCandidates] = useState([]);
   const [results, setResults] = useState([]);
@@ -81,6 +114,16 @@ export default function AdvancedSearch() {
   const [sortBy, setSortBy] = useState("relevance");
   const [error, setError] = useState("");
   const [initialFilters, setInitialFilters] = useState(null);
+  const [detailCandidate, setDetailCandidate] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [showCallFeedbackDrawer, setShowCallFeedbackDrawer] = useState(false);
+  const [feedbackCandidate, setFeedbackCandidate] = useState(null);
+  const [feedbackInitialData, setFeedbackInitialData] = useState(null);
+  const [messagePanel, setMessagePanel] = useState({
+    open: false,
+    recipient: "am",
+    candidate: null,
+  });
 
   const loadCandidates = useCallback(async () => {
     setLoading(true);
@@ -132,8 +175,173 @@ export default function AdvancedSearch() {
     () => sortCandidates(results, sortBy),
     [results, sortBy],
   );
+  const detailProfile = useMemo(
+    () => (detailCandidate ? mapCandidateToProfile(detailCandidate, true) : null),
+    [detailCandidate],
+  );
+  const isQuickActionsDisabled = useMemo(() => {
+    const status = String(
+      detailCandidate?.status ||
+      detailCandidate?.application_status ||
+      detailProfile?.status ||
+      "",
+    )
+      .trim()
+      .toLowerCase();
+    return QUICK_ACTION_LOCKED_STATUSES.has(status);
+  }, [detailCandidate, detailProfile]);
+  const quickActionsDisabledMessage = useMemo(() => {
+    const status = String(
+      detailCandidate?.status ||
+      detailCandidate?.application_status ||
+      detailProfile?.status ||
+      "",
+    )
+      .trim()
+      .toLowerCase();
+    return QUICK_ACTION_LOCKED_STATUS_MESSAGES[status] || "";
+  }, [detailCandidate, detailProfile]);
 
-  const analysisText = searchParams.get("analysis");
+  const updateCandidateInList = useCallback((list, updatedCandidate) => {
+    const updatedId = String(
+      updatedCandidate?.id ||
+      updatedCandidate?._id ||
+      updatedCandidate?.candidate_id ||
+      "",
+    ).trim();
+    if (!updatedId) return list;
+    return list.map((item) => {
+      const itemId = String(item?.id || item?._id || item?.candidate_id || "").trim();
+      if (itemId !== updatedId) return item;
+      return { ...item, ...updatedCandidate };
+    });
+  }, []);
+
+  const refreshDetailCandidate = useCallback(async () => {
+    if (!detailCandidate) return;
+    const apiId = getCandidateApiId(detailCandidate);
+    if (!apiId) return;
+    try {
+      const detail = await candidateService.getCandidateById(apiId);
+      if (detail && typeof detail === "object") {
+        setDetailCandidate((prev) => ({ ...(prev || {}), ...(detail || {}) }));
+        setAllCandidates((prev) => updateCandidateInList(prev, detail));
+        setResults((prev) => updateCandidateInList(prev, detail));
+      }
+    } catch {
+      // keep current detail snapshot if refresh fails
+    }
+  }, [detailCandidate, updateCandidateInList]);
+
+  const handleViewDetails = useCallback(async (candidate) => {
+    const candidateId = candidate?.id || candidate?.candidate_id || candidate?._id || "";
+    if (!candidateId) return;
+
+    setDetailLoading(true);
+    setDetailCandidate(candidate);
+    try {
+      const fullCandidate = await candidateService.getCandidateById(candidateId);
+      const normalizedFullCandidate =
+        fullCandidate && typeof fullCandidate === "object"
+          ? (fullCandidate.candidate && typeof fullCandidate.candidate === "object"
+            ? fullCandidate.candidate
+            : fullCandidate)
+          : null;
+      if (normalizedFullCandidate) {
+        const merged = { ...candidate, ...normalizedFullCandidate };
+        setDetailCandidate(merged);
+        setAllCandidates((prev) => updateCandidateInList(prev, merged));
+        setResults((prev) => updateCandidateInList(prev, merged));
+      }
+    } catch (detailErr) {
+      setDetailCandidate(candidate);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [updateCandidateInList]);
+
+  const openFeedbackDrawer = useCallback((candidate, feedback = null) => {
+    setFeedbackCandidate(candidate);
+    setFeedbackInitialData(feedback || null);
+    setShowCallFeedbackDrawer(true);
+  }, []);
+
+  const resolveAccountManagerFromCandidate = useCallback((candidate) => ({
+    id:
+      candidate?.account_manager_id ||
+      candidate?.account_manager?.id ||
+      candidate?.account_manager?.am_id ||
+      "",
+    name:
+      candidate?.account_manager_name ||
+      candidate?.account_manager?.name ||
+      candidate?.account_manager?.am_name ||
+      "",
+    email:
+      candidate?.account_manager_email ||
+      candidate?.account_manager?.email ||
+      candidate?.account_manager?.am_email ||
+      "",
+  }), []);
+
+  const handleOpenMessagePanel = useCallback((candidate, recipient) => {
+    if (!candidate) return;
+    setMessagePanel({ open: true, recipient, candidate });
+  }, []);
+
+  const handleSendMessage = useCallback(async (message) => {
+    const target = messagePanel.candidate;
+    const apiId = getCandidateApiId(target);
+    if (!apiId) throw new Error("Candidate ID not found");
+
+    const deliveryMode = message?.deliveryMode || "email";
+    const shouldSendEmail = deliveryMode === "email" || deliveryMode === "both";
+    const shouldSendPortalNote = deliveryMode === "portal_note" || deliveryMode === "both";
+    const recipient = message?.recipient || messagePanel.recipient || "candidate";
+    const subject = String(message?.subject || "").trim();
+    const body = String(message?.body || "").trim();
+    const to = String(message?.to || "").trim();
+    const cc = String(message?.cc || "").trim();
+
+    if (!body) throw new Error("Message body is required");
+
+    if (shouldSendPortalNote) {
+      const recipientLabel = recipient === "am" ? "Account Manager" : "Candidate";
+      const noteText = subject
+        ? `[Message to ${recipientLabel}] ${subject}\n${body}`
+        : `[Message to ${recipientLabel}] ${body}`;
+      await candidateService.addCandidateNote(apiId, { note: noteText });
+    }
+
+    if (shouldSendEmail) {
+      if (recipient === "candidate") {
+        const form = new FormData();
+        form.append("subject", subject || "Candidate Update");
+        form.append("message_body", body);
+        form.append("candidate_ids", apiId);
+        await api.post("/v1/candidates/email/send", form, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      } else {
+        const am = resolveAccountManagerFromCandidate(target);
+        const recipientEmail = to || am.email;
+        if (!recipientEmail) {
+          throw new Error("Account Manager email is not mapped for this candidate");
+        }
+        const query = new URLSearchParams();
+        if (subject) query.set("subject", subject);
+        if (body) query.set("body", body);
+        if (cc) query.set("cc", cc);
+        window.open(
+          `mailto:${encodeURIComponent(recipientEmail)}?${query.toString()}`,
+          "_blank",
+        );
+      }
+    }
+
+    await loadCandidates();
+    await refreshDetailCandidate();
+  }, [loadCandidates, messagePanel.candidate, messagePanel.recipient, refreshDetailCandidate, resolveAccountManagerFromCandidate]);
 
   return (
     <div className="semantic-search-page">
@@ -151,16 +359,6 @@ export default function AdvancedSearch() {
         </div>
       </div>
 
-      {analysisText && (
-        <div className="semantic-search-page__context semantic-search-page__context--ai">
-          <span className="semantic-search-page__context-badge">AI Analysis</span>
-          <p className="semantic-search-page__context-text">{analysisText}</p>
-          <span className="semantic-search-page__context-score">
-            Query: {query || "Not specified"}
-          </span>
-        </div>
-      )}
-
       {error && (
         <div className="semantic-search-page__context">
           <span className="semantic-search-page__context-text">{error}</span>
@@ -172,20 +370,81 @@ export default function AdvancedSearch() {
           onSearch={handleSearch}
           loading={loading}
           initialQuery={query}
-          initialKeywords={initialFilters?.keywords || []}
+          initialKeywords={initialFilters?.keywords}
           initialFilters={initialFilters}
-          showSmartHint={Boolean(analysisText)}
+          showSmartHint={false}
         />
         <CandidateResultsList
           candidates={sortedResults}
           loading={loading}
           sortBy={sortBy}
           onSortChange={setSortBy}
-          onViewDetails={(candidate) =>
-            navigate(`/recruiter/candidate-profile/${candidate?.id || candidate?.candidate_id || ""}`)
-          }
+          onViewDetails={handleViewDetails}
         />
       </div>
+
+      {detailCandidate && detailProfile && (
+        <CandidateDetail
+          candidate={detailCandidate}
+          profile={detailProfile}
+          loading={detailLoading}
+          onClose={() => {
+            setDetailCandidate(null);
+            setDetailLoading(false);
+          }}
+          onOpenFeedback={openFeedbackDrawer}
+          onMessageAm={(candidate) => handleOpenMessagePanel(candidate, "am")}
+          onMessageCandidate={(candidate) =>
+            handleOpenMessagePanel(candidate, "candidate")
+          }
+          hideStatusControls
+          hideSendToAMAction
+          hideScheduleInterviewAction
+          hideOpenFullProfileAction
+          quickActionsDisabled={isQuickActionsDisabled}
+          quickActionsDisabledMessage={quickActionsDisabledMessage}
+        />
+      )}
+
+      {showCallFeedbackDrawer && feedbackCandidate && (
+        <CallFeedbackDrawer
+          isOpen={showCallFeedbackDrawer}
+          candidateId={getCandidateApiId(feedbackCandidate)}
+          candidateName={
+            feedbackCandidate.full_name || feedbackCandidate.name || "Candidate"
+          }
+          initialData={feedbackInitialData}
+          onClose={() => {
+            setShowCallFeedbackDrawer(false);
+            setFeedbackInitialData(null);
+          }}
+          onSuccess={() => {
+            setShowCallFeedbackDrawer(false);
+            setFeedbackInitialData(null);
+            loadCandidates();
+            refreshDetailCandidate();
+          }}
+        />
+      )}
+
+      {messagePanel.open && messagePanel.candidate && (
+        <CustomMessagePanel
+          candidate={messagePanel.candidate}
+          recipient={messagePanel.recipient}
+          onClose={() =>
+            setMessagePanel({ open: false, recipient: "am", candidate: null })
+          }
+          onSend={async (payload) => {
+            try {
+              await handleSendMessage(payload);
+            } catch (sendErr) {
+              alert(sendErr?.message || "Failed to send message");
+              return;
+            }
+            setMessagePanel({ open: false, recipient: "am", candidate: null });
+          }}
+        />
+      )}
     </div>
   );
 }

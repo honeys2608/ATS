@@ -43,8 +43,8 @@ const AlarmIcon = () => {
     if (notificationsForbidden) return;
     try {
       const response = await apiGetWithFallback(
-        "/v1/notifications/summary",
         "/api/notifications/summary",
+        "/v1/notifications/summary",
       );
       const data = response.data;
 
@@ -73,7 +73,7 @@ const AlarmIcon = () => {
     if (notificationsForbidden) return;
     setLoading(true);
     try {
-      const response = await apiGetWithFallback("/v1/notifications", "/api/notifications", {
+      const response = await apiGetWithFallback("/api/notifications", "/v1/notifications", {
         params: {
           limit: 50,
           unread_only: false,
@@ -97,8 +97,8 @@ const AlarmIcon = () => {
   const markAsRead = async (notificationId) => {
     try {
       await apiPostWithFallback(
-        `/v1/notifications/${notificationId}/mark-read`,
         `/api/notifications/${notificationId}/mark-read`,
+        `/v1/notifications/${notificationId}/mark-read`,
       );
 
       // Update local state
@@ -121,8 +121,8 @@ const AlarmIcon = () => {
   const markAllAsRead = async () => {
     try {
       await apiPostWithFallback(
-        "/v1/notifications/mark-all-read",
         "/api/notifications/mark-all-read",
+        "/v1/notifications/mark-all-read",
       );
 
       // Update local state
@@ -208,7 +208,7 @@ const AlarmIcon = () => {
     const requirementCode = notification.requirement?.code;
     if (requirementCode) params.set("requirement_code", String(requirementCode));
 
-    params.set("tab", "sent_to_am");
+    params.set("tab", "client_shortlisted");
 
     return `/recruiter/candidate-workflow?${params.toString()}`;
   };

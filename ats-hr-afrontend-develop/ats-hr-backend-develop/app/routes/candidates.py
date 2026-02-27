@@ -3578,11 +3578,27 @@ def _apply_parsed_profile_fields_to_candidate(
     candidate.city = parsed_city or getattr(candidate, "city", "")
 
     candidate.gender = _pick_first_non_empty(data.get("gender"), getattr(candidate, "gender", None))
-    candidate.date_of_birth = _pick_first_non_empty(
+    parsed_dob = _pick_first_non_empty(
         data.get("date_of_birth"),
         data.get("dob"),
         getattr(candidate, "date_of_birth", None),
     )
+    if parsed_dob:
+        candidate.date_of_birth = parsed_dob
+        # Keep Date-type dob field in sync for UI/exports that read this column.
+        try:
+            dob_str = str(parsed_dob).strip()
+            parsed_date = None
+            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y"):
+                try:
+                    parsed_date = datetime.strptime(dob_str, fmt).date()
+                    break
+                except Exception:
+                    continue
+            if parsed_date:
+                candidate.dob = parsed_date
+        except Exception:
+            pass
 
     notice_period = _pick_first_non_empty(data.get("notice_period"), getattr(candidate, "notice_period", None))
     if notice_period:
@@ -3650,6 +3666,48 @@ def _apply_parsed_profile_fields_to_candidate(
         candidate.certifications_text = certifications_text
 
 
+def _persist_parsed_payload(candidate: models.Candidate, parsed: dict, data: dict) -> None:
+    parsed_json = data.get("parsed_json") if isinstance(data, dict) else None
+    if not isinstance(parsed_json, dict):
+        parsed_json = data if isinstance(data, dict) else {}
+
+    _persist_parsed_payload(candidate, parsed, data)
+    candidate.parsed_json = parsed_json
+    candidate.parser_version = (data.get("parser_version") if isinstance(data, dict) else None) or "v1"
+    candidate.raw_text = (data.get("resume_text") if isinstance(data, dict) else None) or ""
+    candidate.parsed_at = datetime.utcnow()
+
+
+def _resolve_resume_local_path(candidate: models.Candidate) -> Optional[str]:
+    existing = getattr(candidate, "resume_path", None)
+    if existing and os.path.exists(existing):
+        return existing
+
+    resume_url = str(getattr(candidate, "resume_url", "") or "").strip()
+    if not resume_url:
+        return None
+    if os.path.exists(resume_url):
+        return resume_url
+    if resume_url.startswith("/"):
+        local = resume_url.lstrip("/")
+        if os.path.exists(local):
+            return local
+    joined = os.path.join(".", resume_url.lstrip("/"))
+    if os.path.exists(joined):
+        return joined
+    return None
+
+
+def _set_if_empty(obj: Any, attr: str, value: Any):
+    if value is None:
+        return
+    if isinstance(value, str) and not value.strip():
+        return
+    current = getattr(obj, attr, None)
+    if current is None or (isinstance(current, str) and not current.strip()) or (isinstance(current, list) and not current):
+        setattr(obj, attr, value)
+
+
 @router.post('/upload-resume')
 @require_permission('candidates', 'create')
 async def upload_resume(
@@ -3713,8 +3771,7 @@ async def upload_resume(
                 parsed_city=parsed_city,
             )
             candidate.resume_url = f"/uploads/resumes/{safe_name}"
-            candidate.parsed_resume = parsed
-            candidate.parsed_data_json = data
+            _persist_parsed_payload(candidate, parsed, data)
             candidate.updated_at = datetime.utcnow()
             if str(candidate.status).lower() in {"new", "verified"}:
                 candidate.status = models.CandidateStatus.sourced
@@ -3742,6 +3799,10 @@ async def upload_resume(
             source='Resume Upload',
             parsed_resume=parsed,
             parsed_data_json=data,
+            parsed_json=(data.get("parsed_json") if isinstance(data, dict) else data),
+            parser_version=(data.get("parser_version") if isinstance(data, dict) else "v1"),
+            raw_text=(data.get("resume_text") if isinstance(data, dict) else ""),
+            parsed_at=datetime.utcnow(),
             created_at=datetime.utcnow(),
         )
         _apply_parsed_profile_fields_to_candidate(
@@ -3760,6 +3821,82 @@ async def upload_resume(
         db.rollback()
         raise HTTPException(400, compact_resume_upload_error(e))
     return {'message': 'success', 'status': status, 'candidate_id': getattr(candidate, 'public_id', None)}
+
+
+@router.post("/{candidate_id}/reparse-resume")
+@require_permission("candidates", "update")
+async def reparse_candidate_resume(
+    candidate_id: str,
+    overwrite_mode: str = Query("smart", regex="^(smart|force)$"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    allow_user(current_user)
+    candidate = db.query(models.Candidate).filter(
+        (models.Candidate.id == candidate_id) | (models.Candidate.public_id == candidate_id)
+    ).first()
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+
+    resume_path = _resolve_resume_local_path(candidate)
+    if not resume_path:
+        raise HTTPException(404, "Resume file not found for this candidate")
+
+    parsed = parse_resume_file(resume_path) or {}
+    data = parsed.get("data") if isinstance(parsed, dict) else parsed
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Failed to parse resume")
+
+    parsed_designation, parsed_company, parsed_location, parsed_city = _extract_resume_profile_fields(data)
+
+    if overwrite_mode == "force":
+        _apply_parsed_profile_fields_to_candidate(
+            candidate,
+            data,
+            parsed_designation=parsed_designation,
+            parsed_company=parsed_company,
+            parsed_location=parsed_location,
+            parsed_city=parsed_city,
+        )
+    else:
+        # Smart mode only fills missing values; no destructive overwrite.
+        _set_if_empty(candidate, "full_name", data.get("full_name"))
+        _set_if_empty(candidate, "email", data.get("email"))
+        _set_if_empty(candidate, "phone", data.get("phone"))
+        _set_if_empty(candidate, "skills", data.get("skills"))
+        _set_if_empty(candidate, "current_job_title", parsed_designation)
+        _set_if_empty(candidate, "current_role", parsed_designation)
+        _set_if_empty(candidate, "current_employer", parsed_company)
+        _set_if_empty(candidate, "current_location", parsed_location)
+        _set_if_empty(candidate, "city", parsed_city)
+        _set_if_empty(candidate, "gender", data.get("gender"))
+        _set_if_empty(candidate, "date_of_birth", data.get("date_of_birth") or data.get("dob"))
+        _set_if_empty(candidate, "current_address", data.get("current_address"))
+        _set_if_empty(candidate, "permanent_address", data.get("permanent_address"))
+        _set_if_empty(candidate, "pincode", data.get("pincode"))
+        _set_if_empty(candidate, "preferred_location", data.get("preferred_location"))
+        _set_if_empty(candidate, "notice_period", data.get("notice_period"))
+        if getattr(candidate, "notice_period_days", None) is None:
+            nd = data.get("notice_period_days") or _to_notice_days(data.get("notice_period"))
+            if nd is not None:
+                candidate.notice_period_days = int(nd)
+        if getattr(candidate, "work_history", None) in (None, []) and isinstance(data.get("work_history"), list):
+            candidate.work_history = data.get("work_history")
+        if getattr(candidate, "education_history", None) in (None, []) and isinstance(data.get("education_history"), list):
+            candidate.education_history = data.get("education_history")
+
+    _persist_parsed_payload(candidate, parsed, data)
+    candidate.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(candidate)
+
+    return {
+        "message": "Resume re-parsed successfully",
+        "candidate_id": candidate.public_id or candidate.id,
+        "overwrite_mode": overwrite_mode,
+        "parser_version": candidate.parser_version,
+        "parsed_at": candidate.parsed_at,
+    }
 
 # =============================
 # Bulk Resume Upload (admin single/multi)
@@ -3835,8 +3972,7 @@ async def bulk_resume_upload(
                         parsed_city=parsed_city,
                     )
                     candidate.resume_url = f"/uploads/resumes/{safe_name}"
-                    candidate.parsed_resume = parsed
-                    candidate.parsed_data_json = data
+                    _persist_parsed_payload(candidate, parsed, data)
                     candidate.updated_at = datetime.utcnow()
                     if str(candidate.status).lower() in {"new", "verified"}:
                         candidate.status = models.CandidateStatus.sourced
@@ -3864,6 +4000,10 @@ async def bulk_resume_upload(
                     source='Bulk Resume Upload',
                     parsed_resume=parsed,
                     parsed_data_json=data,
+                    parsed_json=(data.get("parsed_json") if isinstance(data, dict) else data),
+                    parser_version=(data.get("parser_version") if isinstance(data, dict) else "v1"),
+                    raw_text=(data.get("resume_text") if isinstance(data, dict) else ""),
+                    parsed_at=datetime.utcnow(),
                     created_at=datetime.utcnow(),
                 )
                 _apply_parsed_profile_fields_to_candidate(
@@ -4074,8 +4214,7 @@ async def upload_resume(
                 parsed_city=parsed_city,
             )
             candidate.resume_url = f"/uploads/resumes/{safe_name}"
-            candidate.parsed_resume = parsed
-            candidate.parsed_data_json = data
+            _persist_parsed_payload(candidate, parsed, data)
             candidate.updated_at = datetime.utcnow()
             if str(candidate.status).lower() in {"new", "verified"}:
                 candidate.status = models.CandidateStatus.sourced
@@ -4103,6 +4242,10 @@ async def upload_resume(
             source='Resume Upload',
             parsed_resume=parsed,
             parsed_data_json=data,
+            parsed_json=(data.get("parsed_json") if isinstance(data, dict) else data),
+            parser_version=(data.get("parser_version") if isinstance(data, dict) else "v1"),
+            raw_text=(data.get("resume_text") if isinstance(data, dict) else ""),
+            parsed_at=datetime.utcnow(),
             created_at=datetime.utcnow(),
         )
         _apply_parsed_profile_fields_to_candidate(
@@ -4190,8 +4333,7 @@ async def bulk_resume_upload(
                         parsed_city=parsed_city,
                     )
                     candidate.resume_url = f"/uploads/resumes/{safe_name}"
-                    candidate.parsed_resume = parsed
-                    candidate.parsed_data_json = data
+                    _persist_parsed_payload(candidate, parsed, data)
                     candidate.updated_at = datetime.utcnow()
                     if str(candidate.status).lower() in {"new", "verified"}:
                         candidate.status = models.CandidateStatus.sourced
@@ -4219,6 +4361,10 @@ async def bulk_resume_upload(
                     source='Bulk Resume Upload',
                     parsed_resume=parsed,
                     parsed_data_json=data,
+                    parsed_json=(data.get("parsed_json") if isinstance(data, dict) else data),
+                    parser_version=(data.get("parser_version") if isinstance(data, dict) else "v1"),
+                    raw_text=(data.get("resume_text") if isinstance(data, dict) else ""),
+                    parsed_at=datetime.utcnow(),
                     created_at=datetime.utcnow(),
                 )
                 _apply_parsed_profile_fields_to_candidate(
@@ -4323,8 +4469,7 @@ async def _process_bulk_resume_upload_async(
                             parsed_city=parsed_city,
                         )
                         candidate.resume_url = f"/uploads/resumes/{safe_name}"
-                        candidate.parsed_resume = parsed
-                        candidate.parsed_data_json = data
+                        _persist_parsed_payload(candidate, parsed, data)
                         candidate.updated_at = datetime.utcnow()
                         if str(candidate.status).lower() in {"new", "verified"}:
                             candidate.status = models.CandidateStatus.sourced
@@ -4353,6 +4498,10 @@ async def _process_bulk_resume_upload_async(
                         source="Bulk Resume Upload",
                         parsed_resume=parsed,
                         parsed_data_json=data,
+                        parsed_json=(data.get("parsed_json") if isinstance(data, dict) else data),
+                        parser_version=(data.get("parser_version") if isinstance(data, dict) else "v1"),
+                        raw_text=(data.get("resume_text") if isinstance(data, dict) else ""),
+                        parsed_at=datetime.utcnow(),
                         created_at=datetime.utcnow(),
                     )
                     _apply_parsed_profile_fields_to_candidate(

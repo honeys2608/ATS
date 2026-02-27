@@ -160,6 +160,9 @@ export default function CandidateDetail({
   hideSendToAMAction = false,
   hideScheduleInterviewAction = false,
   hideOpenFullProfileAction = false,
+  contextNote = "",
+  quickActionsDisabled = false,
+  quickActionsDisabledMessage = "",
 }) {
   const contentRef = useRef(null);
   const [search, setSearch] = useState("");
@@ -707,6 +710,16 @@ export default function CandidateDetail({
             {!hideQuickActions && (
               <div className="candidate-detail__aside-card">
                 <div className="candidate-detail__aside-title">Quick Actions</div>
+                {quickActionsDisabled && (
+                  <div className="candidate-detail__activity-item">
+                    {quickActionsDisabledMessage || "Actions disabled for current status"}
+                  </div>
+                )}
+                {String(contextNote || "").trim() ? (
+                  <div className="candidate-detail__activity-item">
+                    <strong>AM Note:</strong> {String(contextNote || "").trim()}
+                  </div>
+                ) : null}
                 {customQuickActions ? (
                   customQuickActions.map((action, index) => (
                     <button
@@ -725,6 +738,7 @@ export default function CandidateDetail({
                       type="button"
                       className="candidate-card__btn candidate-card__btn--primary"
                       onClick={() => onOpenFeedback && onOpenFeedback(candidate)}
+                      disabled={quickActionsDisabled}
                     >
                       Call Feedback
                     </button>
@@ -732,6 +746,7 @@ export default function CandidateDetail({
                       type="button"
                       className="candidate-card__btn candidate-card__btn--ghost"
                       onClick={() => setShowFeedbackHistoryModal(true)}
+                      disabled={quickActionsDisabled}
                     >
                       View Callback History
                     </button>
@@ -818,6 +833,7 @@ export default function CandidateDetail({
                         type="button"
                         className="candidate-card__btn candidate-card__btn--ghost"
                         onClick={() => onMessageAm(candidate)}
+                        disabled={quickActionsDisabled}
                       >
                         Message AM
                       </button>
@@ -827,6 +843,7 @@ export default function CandidateDetail({
                         type="button"
                         className="candidate-card__btn candidate-card__btn--ghost"
                         onClick={() => onMessageCandidate(candidate)}
+                        disabled={quickActionsDisabled}
                       >
                         Message Candidate
                       </button>

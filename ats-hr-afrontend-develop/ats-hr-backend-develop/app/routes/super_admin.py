@@ -1,13 +1,21 @@
 from datetime import datetime
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import and_, or_, func
 
 from app import models, schemas
 from app.auth import get_current_user, get_password_hash
 from app.db import get_db
 from app.permissions import require_permission
 from app.services.audit_service import log_audit, map_audit_severity
+from app.utils.user_agent import parse_user_agent
+from app.utils.user_management_validation import (
+    generate_temp_password,
+    normalize_email,
+    validate_email_address,
+    validate_first_name,
+    validate_password_strength,
+)
 
 router = APIRouter(prefix="/v1/super-admin", tags=["Super Admin"])
 
@@ -18,35 +26,550 @@ def require_super_admin(current_user: dict):
         raise HTTPException(status_code=403, detail="Super Admin access required")
 
 
-def _parse_ua_summary(user_agent: str | None) -> dict:
-    ua = (user_agent or "").lower()
-    if not ua:
-        return {"device": None, "browser": None, "os": None}
+USER_STATUSES = {"active", "inactive", "suspended", "locked", "pending"}
 
-    os_name = None
-    if "windows nt" in ua:
-        os_name = "Windows"
-    elif "mac os x" in ua or "macintosh" in ua:
-        os_name = "macOS"
-    elif "android" in ua:
-        os_name = "Android"
-    elif "iphone" in ua or "ipad" in ua:
-        os_name = "iOS"
-    elif "linux" in ua:
-        os_name = "Linux"
 
-    browser = None
-    if "edg/" in ua:
-        browser = "Edge"
-    elif "chrome/" in ua:
-        browser = "Chrome"
-    elif "firefox/" in ua:
-        browser = "Firefox"
-    elif "safari/" in ua and "chrome/" not in ua:
-        browser = "Safari"
+def _normalize_user_status(value: str | None) -> str:
+    status = str(value or "").strip().lower()
+    return status if status in USER_STATUSES else "active"
 
-    device = "Mobile" if any(k in ua for k in ("android", "iphone", "ipad")) else "Desktop"
-    return {"device": device, "browser": browser, "os": os_name}
+
+def _display_name(user: models.User) -> str:
+    return (
+        str(getattr(user, "full_name", "") or "").strip()
+        or " ".join(
+            [
+                str(getattr(user, "first_name", "") or "").strip(),
+                str(getattr(user, "last_name", "") or "").strip(),
+            ]
+        ).strip()
+        or str(getattr(user, "email", "") or "").strip()
+        or str(getattr(user, "username", "") or "").strip()
+    )
+
+
+def _serialize_user_row(user: models.User, tenant_name_map: dict[str, str]) -> dict:
+    role_value = str(getattr(user, "role", "") or "").strip().lower()
+    return {
+        "id": user.id,
+        "first_name": getattr(user, "first_name", None),
+        "last_name": getattr(user, "last_name", None),
+        "full_name": _display_name(user),
+        "email": normalize_email(user.email),
+        "phone": getattr(user, "phone", None),
+        "status": _normalize_user_status(getattr(user, "status", None)),
+        "role_id": getattr(user, "role_id", None),
+        "role": role_value,
+        "tenant_id": getattr(user, "tenant_id", None) or getattr(user, "client_id", None),
+        "tenant_name": tenant_name_map.get((getattr(user, "tenant_id", None) or getattr(user, "client_id", None) or "")),
+        "failed_login_attempts": getattr(user, "failed_login_attempts", 0) or 0,
+        "account_locked_until": getattr(user, "account_locked_until", None),
+        "last_login_at": getattr(user, "last_login_at", None),
+        "created_at": getattr(user, "created_at", None),
+        "updated_at": getattr(user, "updated_at", None),
+        "created_by": getattr(user, "created_by", None),
+        "updated_by": getattr(user, "updated_by", None),
+        "is_active": bool(getattr(user, "is_active", False)),
+    }
+
+
+def _resolve_role_fields(db: Session, *, role_id: int | None, role_name: str | None) -> tuple[int | None, str]:
+    role_key = str(role_name or "").strip().lower()
+    resolved_role_id = role_id
+    if resolved_role_id is not None:
+        role_row = db.query(models.Role).filter(models.Role.id == resolved_role_id).first()
+        if not role_row:
+            raise HTTPException(400, "Invalid role selected")
+        role_key = str(role_row.name or "").strip().lower()
+
+    if role_key:
+        role_row = db.query(models.Role).filter(func.lower(models.Role.name) == role_key).first()
+        if role_row:
+            resolved_role_id = role_row.id
+            role_key = str(role_row.name or "").strip().lower()
+    if not role_key:
+        raise HTTPException(400, "Role is required")
+    if role_key == "super_admin":
+        resolved_role_id = (
+            db.query(models.Role.id).filter(func.lower(models.Role.name) == "super_admin").scalar()
+            or resolved_role_id
+        )
+    return resolved_role_id, role_key
+
+
+def _set_status_flags(user: models.User, status: str) -> None:
+    normalized = _normalize_user_status(status)
+    user.status = normalized
+    if normalized == "active":
+        user.is_active = True
+        user.account_locked_until = None
+        user.failed_login_attempts = 0
+    elif normalized == "locked":
+        user.is_active = True
+        user.account_locked_until = datetime.utcnow()
+        user.failed_login_attempts = max(int(user.failed_login_attempts or 0), 5)
+    else:
+        user.is_active = False
+
+
+@router.get("/users")
+@require_permission("users", "view")
+def list_super_admin_users(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=200),
+    search: str | None = Query(None),
+    role: str | None = Query(None),
+    status: str | None = Query(None),
+    tenant_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    query = db.query(models.User)
+
+    if search:
+        needle = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                models.User.email.ilike(needle),
+                models.User.username.ilike(needle),
+                models.User.full_name.ilike(needle),
+                models.User.first_name.ilike(needle),
+                models.User.last_name.ilike(needle),
+            )
+        )
+    if role:
+        query = query.filter(func.lower(models.User.role) == str(role).strip().lower())
+    if status:
+        query = query.filter(func.lower(models.User.status) == _normalize_user_status(status))
+    if tenant_id:
+        tid = str(tenant_id).strip()
+        query = query.filter(
+            or_(models.User.tenant_id == tid, models.User.client_id == tid)
+        )
+
+    total = query.count()
+    rows = (
+        query.order_by(models.User.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    tenant_ids = {
+        (getattr(row, "tenant_id", None) or getattr(row, "client_id", None))
+        for row in rows
+        if (getattr(row, "tenant_id", None) or getattr(row, "client_id", None))
+    }
+    tenants = db.query(models.Client).filter(models.Client.id.in_(list(tenant_ids))).all() if tenant_ids else []
+    tenant_name_map = {
+        str(t.id): (t.company_name or t.primary_contact_name or t.id)
+        for t in tenants
+    }
+
+    summary_query = db.query(models.User)
+    total_users = summary_query.count()
+    active_users = summary_query.filter(func.lower(models.User.status) == "active").count()
+    suspended_locked_users = summary_query.filter(
+        func.lower(models.User.status).in_(["suspended", "locked"])
+    ).count()
+
+    return {
+        "items": [_serialize_user_row(row, tenant_name_map) for row in rows],
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "total_pages": max(1, (total + limit - 1) // limit) if total else 1,
+        "summary": {
+            "total_users": total_users,
+            "active_users": active_users,
+            "suspended_locked_users": suspended_locked_users,
+        },
+    }
+
+
+@router.get("/users/{user_id}")
+@require_permission("users", "view")
+def get_super_admin_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    tenant_name_map = {}
+    tenant_key = getattr(user, "tenant_id", None) or getattr(user, "client_id", None)
+    if tenant_key:
+        tenant = db.query(models.Client).filter(models.Client.id == tenant_key).first()
+        if tenant:
+            tenant_name_map[tenant.id] = tenant.company_name or tenant.primary_contact_name or tenant.id
+    return _serialize_user_row(user, tenant_name_map)
+
+
+@router.post("/users")
+@require_permission("users", "create")
+def create_super_admin_user(
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+
+    first_name = str(payload.get("first_name") or "").strip()
+    last_name = str(payload.get("last_name") or "").strip() or None
+    phone = str(payload.get("phone") or "").strip() or None
+    email = normalize_email(payload.get("email"))
+    tenant_id = str(payload.get("tenant_id") or "").strip() or None
+    role_id = payload.get("role_id")
+    role_name = payload.get("role") or payload.get("role_name")
+    status = _normalize_user_status(payload.get("status") or "active")
+
+    ok, msg = validate_first_name(first_name)
+    if not ok:
+        raise HTTPException(400, msg)
+    ok, msg = validate_email_address(email)
+    if not ok:
+        raise HTTPException(400, msg)
+
+    if db.query(models.User.id).filter(func.lower(models.User.email) == email).first():
+        raise HTTPException(400, "Email already exists")
+
+    resolved_role_id, resolved_role = _resolve_role_fields(
+        db,
+        role_id=(int(role_id) if role_id is not None else None),
+        role_name=role_name,
+    )
+
+    mode = str(payload.get("password_mode") or "generate").strip().lower()
+    password = str(payload.get("password") or "")
+    generated_password = None
+    if mode == "manual":
+        ok, msg = validate_password_strength(password)
+        if not ok:
+            raise HTTPException(400, msg)
+    else:
+        generated_password = generate_temp_password()
+        password = generated_password
+
+    username = (
+        str(payload.get("username") or "").strip()
+        or email.split("@", 1)[0]
+    )
+
+    user = models.User(
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        full_name=" ".join([first_name, last_name or ""]).strip(),
+        email=email,
+        phone=phone,
+        role=resolved_role,
+        role_id=resolved_role_id,
+        tenant_id=tenant_id,
+        client_id=tenant_id,
+        created_by=current_user.get("id"),
+        updated_by=current_user.get("id"),
+        must_change_password=True,
+        password=get_password_hash(password),
+    )
+    _set_status_flags(user, status)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    sev = map_audit_severity(action="USER_CREATED", status="success")
+    log_audit(
+        actor=current_user,
+        action="USER_CREATED",
+        action_label="User Created",
+        module="users",
+        entity_type="user",
+        entity_id=user.id,
+        entity_name=_display_name(user),
+        status="success",
+        severity=sev,
+        old_value=None,
+        new_value={
+            "email": user.email,
+            "role": user.role,
+            "tenant_id": user.tenant_id,
+            "status": user.status,
+        },
+    )
+
+    if tenant_id:
+        log_audit(
+            actor=current_user,
+            action="TENANT_ASSIGNED",
+            action_label="Tenant Assigned",
+            module="users",
+            entity_type="user",
+            entity_id=user.id,
+            entity_name=_display_name(user),
+            status="success",
+            severity="CRITICAL",
+            old_value=None,
+            new_value={"tenant_id": tenant_id},
+        )
+    if resolved_role:
+        log_audit(
+            actor=current_user,
+            action="ROLE_ASSIGNED",
+            action_label="Role Assigned",
+            module="users",
+            entity_type="user",
+            entity_id=user.id,
+            entity_name=_display_name(user),
+            status="success",
+            severity="CRITICAL",
+            old_value=None,
+            new_value={"role": resolved_role},
+        )
+
+    return {
+        "message": "User created successfully",
+        "user": _serialize_user_row(user, {}),
+        "temp_password": generated_password,
+    }
+
+
+@router.put("/users/{user_id}")
+@require_permission("users", "update")
+def update_super_admin_user(
+    user_id: str,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    old_state = {
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "email": user.email,
+        "role": user.role,
+        "tenant_id": user.tenant_id or user.client_id,
+        "status": user.status,
+    }
+
+    if "first_name" in payload:
+        first_name = str(payload.get("first_name") or "").strip()
+        ok, msg = validate_first_name(first_name)
+        if not ok:
+            raise HTTPException(400, msg)
+        user.first_name = first_name
+    if "last_name" in payload:
+        user.last_name = str(payload.get("last_name") or "").strip() or None
+    if "phone" in payload:
+        user.phone = str(payload.get("phone") or "").strip() or None
+    if "email" in payload:
+        email = normalize_email(payload.get("email"))
+        ok, msg = validate_email_address(email)
+        if not ok:
+            raise HTTPException(400, msg)
+        existing = db.query(models.User).filter(func.lower(models.User.email) == email, models.User.id != user_id).first()
+        if existing:
+            raise HTTPException(400, "Email already exists")
+        user.email = email
+    if "tenant_id" in payload:
+        tenant_id = str(payload.get("tenant_id") or "").strip() or None
+        user.tenant_id = tenant_id
+        user.client_id = tenant_id
+    if "status" in payload:
+        _set_status_flags(user, payload.get("status"))
+    if "role" in payload or "role_name" in payload or "role_id" in payload:
+        resolved_role_id, resolved_role = _resolve_role_fields(
+            db,
+            role_id=(int(payload.get("role_id")) if payload.get("role_id") is not None else None),
+            role_name=payload.get("role") or payload.get("role_name"),
+        )
+        user.role_id = resolved_role_id
+        user.role = resolved_role
+        user.session_invalid_after = datetime.utcnow()
+
+    user.full_name = " ".join([str(user.first_name or "").strip(), str(user.last_name or "").strip()]).strip() or user.full_name
+    user.updated_by = current_user.get("id")
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    new_state = {
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "email": user.email,
+        "role": user.role,
+        "tenant_id": user.tenant_id or user.client_id,
+        "status": user.status,
+    }
+    log_audit(
+        actor=current_user,
+        action="USER_UPDATED",
+        action_label="User Updated",
+        module="users",
+        entity_type="user",
+        entity_id=user.id,
+        entity_name=_display_name(user),
+        status="success",
+        severity=map_audit_severity(action="USER_UPDATED", status="success"),
+        old_value=old_state,
+        new_value=new_state,
+    )
+    if old_state.get("role") != new_state.get("role"):
+        log_audit(
+            actor=current_user,
+            action="ROLE_CHANGED",
+            action_label="Role Changed",
+            module="users",
+            entity_type="user",
+            entity_id=user.id,
+            entity_name=_display_name(user),
+            status="success",
+            severity="CRITICAL",
+            old_value={"role": old_state.get("role")},
+            new_value={"role": new_state.get("role")},
+        )
+    if old_state.get("tenant_id") != new_state.get("tenant_id"):
+        log_audit(
+            actor=current_user,
+            action="TENANT_CHANGED",
+            action_label="Tenant Changed",
+            module="users",
+            entity_type="user",
+            entity_id=user.id,
+            entity_name=_display_name(user),
+            status="success",
+            severity="CRITICAL",
+            old_value={"tenant_id": old_state.get("tenant_id")},
+            new_value={"tenant_id": new_state.get("tenant_id")},
+        )
+
+    return {"message": "User updated successfully", "user": _serialize_user_row(user, {})}
+
+
+@router.patch("/users/{user_id}/status")
+@require_permission("users", "update")
+def update_super_admin_user_status(
+    user_id: str,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    old_status = _normalize_user_status(user.status)
+    new_status = _normalize_user_status(payload.get("status"))
+    if old_status == new_status:
+        return {"message": "Status unchanged", "user": _serialize_user_row(user, {})}
+
+    _set_status_flags(user, new_status)
+    user.updated_by = current_user.get("id")
+    if new_status in {"suspended", "inactive", "locked"}:
+        user.session_invalid_after = datetime.utcnow()
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    severity = "CRITICAL" if new_status in {"suspended", "locked"} else "WARNING"
+    log_audit(
+        actor=current_user,
+        action="USER_STATUS_CHANGED",
+        action_label="User Status Changed",
+        module="users",
+        entity_type="user",
+        entity_id=user.id,
+        entity_name=_display_name(user),
+        status="success",
+        severity=severity,
+        old_value={"status": old_status},
+        new_value={"status": new_status},
+    )
+    return {"message": "Status updated", "user": _serialize_user_row(user, {})}
+
+
+@router.post("/users/{user_id}/reset-password")
+@require_permission("users", "update")
+def reset_super_admin_user_password(
+    user_id: str,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    mode = str(payload.get("mode") or "generate").strip().lower()
+    password = str(payload.get("password") or "")
+    generated_password = None
+    if mode == "manual":
+        ok, msg = validate_password_strength(password)
+        if not ok:
+            raise HTTPException(400, msg)
+    else:
+        generated_password = generate_temp_password()
+        password = generated_password
+
+    user.password = get_password_hash(password)
+    user.must_change_password = True
+    user.session_invalid_after = datetime.utcnow()
+    user.updated_by = current_user.get("id")
+    db.add(user)
+    db.commit()
+
+    log_audit(
+        actor=current_user,
+        action="PASSWORD_RESET_TRIGGERED",
+        action_label="Password Reset Triggered",
+        module="users",
+        entity_type="user",
+        entity_id=user.id,
+        entity_name=_display_name(user),
+        status="success",
+        severity="WARNING",
+        old_value=None,
+        new_value={"must_change_password": True},
+    )
+    return {"message": "Password reset successful", "temp_password": generated_password}
+
+
+@router.post("/users/{user_id}/force-logout")
+@require_permission("users", "update")
+def force_logout_super_admin_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    user.session_invalid_after = datetime.utcnow()
+    user.updated_by = current_user.get("id")
+    db.add(user)
+    db.commit()
+    log_audit(
+        actor=current_user,
+        action="USER_FORCE_LOGOUT",
+        action_label="User Force Logout",
+        module="users",
+        entity_type="user",
+        entity_id=user.id,
+        entity_name=_display_name(user),
+        status="success",
+        severity="WARNING",
+        old_value=None,
+        new_value={"session_invalid_after": user.session_invalid_after.isoformat()},
+    )
+    return {"message": "User sessions invalidated"}
 
 
 @router.post("/audit-logs")
@@ -157,6 +680,25 @@ def list_clients(db: Session = Depends(get_db), current_user=Depends(get_current
             )
         )
     return results
+
+
+@router.get("/tenants")
+@require_permission("clients_tenants", "view")
+def list_tenants_alias(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    tenants = db.query(models.Client).order_by(models.Client.created_at.desc()).all()
+    return [
+        {
+            "id": t.id,
+            "name": t.company_name or t.primary_contact_name or t.id,
+            "email": t.primary_contact_email,
+            "is_active": t.is_active,
+        }
+        for t in tenants
+    ]
 
 
 @router.put("/clients/{client_id}/status")
@@ -274,137 +816,273 @@ def create_admin(
     return user
 
 
-@router.get("/system-settings", response_model=list[schemas.SystemSettingUpsert])
-@require_permission("system_settings", "view")
-def list_system_settings(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    require_super_admin(current_user)
-    settings = db.query(models.SystemSettings).all()
-    return [
-        schemas.SystemSettingUpsert(
-            module_name=s.module_name,
-            setting_key=s.setting_key,
-            setting_value=s.setting_value or {},
-            description=s.description,
+def _resolve_setting_row(db: Session, key: str):
+    return (
+        db.query(models.SystemSettings)
+        .filter(
+            or_(
+                models.SystemSettings.config_key == key,
+                and_(
+                    models.SystemSettings.module_name == key.split(".", 1)[0],
+                    models.SystemSettings.setting_key == key.split(".", 1)[1] if "." in key else key,
+                ),
+            )
         )
-        for s in settings
-    ]
+        .first()
+    )
+
+
+def _setting_to_dict(row: models.SystemSettings) -> dict:
+    full_key = row.config_key or f"{row.module_name}.{row.setting_key}"
+    value = row.value_json if row.value_json is not None else row.setting_value
+    return {
+        "id": row.id,
+        "key": full_key,
+        "value": None if row.is_secret else value,
+        "has_value": bool(value is not None),
+        "value_type": row.value_type or "json",
+        "category": row.category or (str(full_key).split(".", 1)[0] if full_key else "general"),
+        "description": row.description,
+        "is_secret": bool(row.is_secret),
+        "is_editable": bool(row.is_editable) if row.is_editable is not None else True,
+        "updated_by": row.updated_by,
+        "updated_at": row.updated_at,
+    }
+
+
+@router.get("/system-settings")
+@require_permission("system_settings", "view")
+def list_system_settings(
+    category: str | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    q = db.query(models.SystemSettings)
+    if category:
+        q = q.filter(func.lower(func.coalesce(models.SystemSettings.category, "")) == category.strip().lower())
+    rows = q.order_by(models.SystemSettings.category.asc(), models.SystemSettings.config_key.asc(), models.SystemSettings.setting_key.asc()).all()
+    return {"items": [_setting_to_dict(row) for row in rows]}
 
 
 @router.put("/system-settings")
 @require_permission("system_settings", "update")
 def upsert_system_setting(
-    payload: schemas.SystemSettingUpsert,
+    payload: dict = Body(...),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     require_super_admin(current_user)
-    existing = (
-        db.query(models.SystemSettings)
-        .filter(
-            models.SystemSettings.module_name == payload.module_name,
-            models.SystemSettings.setting_key == payload.setting_key,
-        )
-        .first()
-    )
-    old_state = None
-    if existing:
-        old_state = str(existing.setting_value)
-        existing.setting_value = payload.setting_value
-        existing.description = payload.description
-        existing.updated_by = current_user.get("id")
-        existing.updated_at = datetime.utcnow()
-        db.add(existing)
-        entity_id = existing.id
-    else:
-        new_setting = models.SystemSettings(
-            module_name=payload.module_name,
-            setting_key=payload.setting_key,
-            setting_value=payload.setting_value,
-            description=payload.description,
-            updated_by=current_user.get("id"),
-            updated_at=datetime.utcnow(),
-        )
-        db.add(new_setting)
-        db.commit()
-        db.refresh(new_setting)
-        entity_id = new_setting.id
-    log_audit(
-        actor=current_user,
-        action="SYSTEM_SETTING_UPSERT",
-        module="System Settings",
-        entity_type="system_setting",
-        entity_id=entity_id,
-        description="System setting upserted",
-        old_values={"setting_value": old_state},
-        new_values={"setting_value": payload.setting_value},
-        severity="INFO",
-    )
+
+    updates = payload.get("updates")
+    if not updates:
+        module_name = str(payload.get("module_name") or "").strip()
+        setting_key = str(payload.get("setting_key") or "").strip()
+        setting_value = payload.get("setting_value")
+        if module_name and setting_key:
+            updates = [{"key": f"{module_name}.{setting_key}", "value": setting_value, "description": payload.get("description")}]
+
+    if not isinstance(updates, list) or not updates:
+        raise HTTPException(400, "updates[] is required")
+
+    changed: list[dict] = []
+    for item in updates:
+        key = str(item.get("key") or "").strip()
+        if not key or "." not in key:
+            raise HTTPException(400, f"Invalid key: {key or '<empty>'}")
+        module_name, setting_key = key.split(".", 1)
+        value = item.get("value")
+        value_type = str(item.get("value_type") or ("boolean" if isinstance(value, bool) else "number" if isinstance(value, (int, float)) else "json" if isinstance(value, (dict, list)) else "string")).lower()
+
+        existing = _resolve_setting_row(db, key)
+        before = None
+        if existing:
+            before = existing.value_json if existing.value_json is not None else existing.setting_value
+            existing.config_key = key
+            existing.value_json = value
+            existing.setting_value = value
+            existing.value_type = value_type
+            existing.category = str(item.get("category") or existing.category or module_name)
+            if item.get("description") is not None:
+                existing.description = item.get("description")
+            existing.is_secret = bool(item.get("is_secret", existing.is_secret))
+            existing.is_editable = bool(item.get("is_editable", True if existing.is_editable is None else existing.is_editable))
+            existing.module_name = module_name
+            existing.setting_key = setting_key
+            existing.updated_by = current_user.get("id")
+            existing.updated_at = datetime.utcnow()
+            row = existing
+        else:
+            row = models.SystemSettings(
+                config_key=key,
+                value_json=value,
+                value_type=value_type,
+                category=str(item.get("category") or module_name),
+                module_name=module_name,
+                setting_key=setting_key,
+                setting_value=value,
+                description=item.get("description"),
+                is_secret=bool(item.get("is_secret", False)),
+                is_editable=bool(item.get("is_editable", True)),
+                updated_by=current_user.get("id"),
+                updated_at=datetime.utcnow(),
+            )
+            db.add(row)
+        changed.append({"key": key, "before": before, "after": value})
+
     db.commit()
-    return {"message": "System setting updated"}
+    for row in changed:
+        log_audit(
+            actor=current_user,
+            action="SYSTEM_SETTINGS_UPDATED",
+            module="system_settings",
+            entity_type="system_setting",
+            entity_id=row["key"],
+            description=f"Updated setting {row['key']}",
+            old_values={"value": row["before"]},
+            new_values={"value": row["after"]},
+            severity="CRITICAL" if row["key"].startswith(("auth.", "maintenance.", "rate_limit.")) else "INFO",
+        )
+    return {"message": "System settings updated", "updated_count": len(changed)}
 
 
-@router.get("/feature-flags", response_model=list[schemas.FeatureFlagUpsert])
+@router.get("/feature-flags")
 @require_permission("feature_flags", "view")
 def list_feature_flags(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     require_super_admin(current_user)
-    flags = db.query(models.FeatureFlag).all()
-    return [
-        schemas.FeatureFlagUpsert(
-            key=f.flag_key,
-            enabled=f.enabled,
-            description=f.description,
+    rows = db.query(models.FeatureFlag).order_by(models.FeatureFlag.public_key.asc(), models.FeatureFlag.flag_key.asc()).all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "key": row.public_key or row.flag_key,
+                "enabled": bool(row.enabled),
+                "rollout_json": row.rollout_json or {},
+                "description": row.description,
+                "updated_by": row.updated_by,
+                "updated_at": row.updated_at,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.put("/feature-flags/{key}")
+@require_permission("feature_flags", "update")
+def update_feature_flag(
+    key: str,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    normalized = key.strip()
+    if not normalized:
+        raise HTTPException(400, "Feature key is required")
+    row = (
+        db.query(models.FeatureFlag)
+        .filter(or_(models.FeatureFlag.public_key == normalized, models.FeatureFlag.flag_key == normalized))
+        .first()
+    )
+    before = None
+    if row:
+        before = {"enabled": row.enabled, "rollout_json": row.rollout_json, "description": row.description}
+        row.public_key = normalized
+        row.flag_key = normalized
+        row.enabled = bool(payload.get("enabled", row.enabled))
+        row.rollout_json = payload.get("rollout_json", row.rollout_json or {})
+        row.description = payload.get("description", row.description)
+        row.updated_by = current_user.get("id")
+        row.updated_at = datetime.utcnow()
+    else:
+        row = models.FeatureFlag(
+            public_key=normalized,
+            flag_key=normalized,
+            enabled=bool(payload.get("enabled", False)),
+            rollout_json=payload.get("rollout_json", {}),
+            description=payload.get("description"),
+            updated_by=current_user.get("id"),
+            updated_at=datetime.utcnow(),
         )
-        for f in flags
-    ]
+        db.add(row)
+
+    db.commit()
+    log_audit(
+        actor=current_user,
+        action="FEATURE_FLAG_UPDATED",
+        module="system_settings",
+        entity_type="feature_flag",
+        entity_id=normalized,
+        description=f"Feature flag updated: {normalized}",
+        old_values=before,
+        new_values={"enabled": row.enabled, "rollout_json": row.rollout_json, "description": row.description},
+        severity="INFO",
+    )
+    return {"message": "Feature flag updated"}
 
 
 @router.put("/feature-flags")
 @require_permission("feature_flags", "update")
-def upsert_feature_flag(
+def upsert_feature_flag_legacy(
     payload: schemas.FeatureFlagUpsert,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    return update_feature_flag(payload.key, {"enabled": payload.enabled, "description": payload.description}, db, current_user)
+
+
+@router.put("/maintenance")
+@require_permission("system_settings", "update")
+def update_maintenance_settings(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     require_super_admin(current_user)
-    existing = (
-        db.query(models.FeatureFlag)
-        .filter(models.FeatureFlag.flag_key == payload.key)
-        .first()
+    updates = [
+        {"key": "maintenance.enabled", "value": bool(payload.get("enabled", False))},
+        {"key": "maintenance.message", "value": payload.get("message") or "Platform is under maintenance. Please try again later."},
+    ]
+    if payload.get("api_rpm") is not None:
+        updates.append({"key": "rate_limit.api_rpm", "value": int(payload.get("api_rpm") or 0)})
+    return upsert_system_setting({"updates": updates}, db, current_user)
+
+
+@router.get("/system-settings/audit")
+@require_permission("audit_logs", "view")
+def list_system_settings_audit(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    require_super_admin(current_user)
+    q = (
+        db.query(models.AuditLog)
+        .filter(func.lower(func.coalesce(models.AuditLog.module, "")) == "system_settings")
+        .order_by(models.AuditLog.timestamp.desc())
     )
-    old_state = None
-    if existing:
-        old_state = str(existing.enabled)
-        existing.enabled = payload.enabled
-        existing.description = payload.description
-        existing.updated_by = current_user.get("id")
-        existing.updated_at = datetime.utcnow()
-        db.add(existing)
-        entity_id = existing.id
-    else:
-        new_flag = models.FeatureFlag(
-            flag_key=payload.key,
-            enabled=payload.enabled,
-            description=payload.description,
-            updated_by=current_user.get("id"),
-            updated_at=datetime.utcnow(),
-        )
-        db.add(new_flag)
-        db.commit()
-        db.refresh(new_flag)
-        entity_id = new_flag.id
-    log_audit(
-        actor=current_user,
-        action="FEATURE_FLAG_UPSERT",
-        module="Feature Flags",
-        entity_type="feature_flag",
-        entity_id=entity_id,
-        description="Feature flag upserted",
-        old_values={"enabled": old_state},
-        new_values={"enabled": payload.enabled, "flag": payload.key},
-        severity="INFO",
-    )
-    db.commit()
-    return {"message": "Feature flag updated"}
+    total = q.count()
+    rows = q.offset((page - 1) * limit).limit(limit).all()
+    return {
+        "items": [
+            {
+                "id": row.log_id,
+                "actor_id": row.actor_id,
+                "actor_name": row.actor_name,
+                "action": row.action,
+                "module": row.module,
+                "before_json": row.old_values,
+                "after_json": row.new_values,
+                "created_at": row.timestamp,
+            }
+            for row in rows
+        ],
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": max(1, (total + limit - 1) // limit) if total else 1,
+    }
 
 
 @router.get("/audit-logs")
@@ -678,7 +1356,7 @@ def list_audit_logs(
         actor_name = None
         if actor:
             actor_name = actor.full_name or actor.email or actor.username
-        ua_parts = _parse_ua_summary(log.user_agent)
+        ua_parts = parse_user_agent(log.user_agent)
         payload.append(
             {
                 "id": log.id,
@@ -767,7 +1445,7 @@ def list_audit_logs(
 
     for row in login_rows:
         actor = users.get(row.user_id)
-        ua_parts = _parse_ua_summary(row.user_agent)
+        ua_parts = parse_user_agent(row.user_agent)
         if tenant_id and (actor.client_id if actor else None) != tenant_id:
             continue
         payload.append(

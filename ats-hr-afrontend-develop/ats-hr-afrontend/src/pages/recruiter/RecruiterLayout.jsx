@@ -90,10 +90,10 @@ export default function RecruiterLayout() {
             <NavLink to="/recruiter/interviews" className={itemClass}>
               <Calendar size={18} /> Interviews
             </NavLink>
-            <NavLink to="/recruiter/interview-calendar" className={itemClass}>
+            <NavLink to="/recruiter/interviews/calendar" className={itemClass}>
               <Clock size={18} /> Interview Calendar
             </NavLink>
-            <NavLink to="/recruiter/interview-logs" className={itemClass}>
+            <NavLink to="/recruiter/interviews/logs" className={itemClass}>
               <FileText size={18} /> Interview Logs
             </NavLink>
           </Section>
@@ -111,7 +111,7 @@ export default function RecruiterLayout() {
           </Section>
 
           <Section title="Account">
-            <NavLink to="/recruiter/my-profile" className={itemClass}>
+            <NavLink to="/recruiter/profile" className={itemClass}>
               <User size={18} /> My Profile
             </NavLink>
             <NavLink to="/recruiter/settings" className={itemClass}>

@@ -390,7 +390,9 @@ function Interviews() {
       return;
     }
     if (scheduleType === "video" && !meetingLink.trim()) {
-      setScheduleError("Meeting link is required for Google Meet.");
+      setScheduleError(
+        "Online meeting link is required (Google Meet, Teams, Zoom, etc.).",
+      );
       return;
     }
     if (scheduleType === "in_person" && !location.trim()) {
@@ -558,20 +560,20 @@ function Interviews() {
                 className="w-full border rounded px-3 py-2"
               >
                 <option value="ai_chat">AI Chat Interview</option>
-                <option value="video">Google Meet</option>
+                <option value="video">Online Meeting (Meet/Teams/Zoom)</option>
                 <option value="in_person">In-Person</option>
               </select>
             </div>
             {scheduleType === "video" && (
               <div>
                 <label className="block text-sm font-semibold mb-1">
-                  Meet Link
+                  Online Meeting Link
                 </label>
                 <input
                   type="url"
                   value={meetingLink}
                   onChange={(e) => setMeetingLink(e.target.value)}
-                  placeholder="https://meet.google.com/..."
+                  placeholder="https://meet.google.com/... or https://teams.microsoft.com/..."
                   className="w-full border rounded px-3 py-2"
                 />
               </div>

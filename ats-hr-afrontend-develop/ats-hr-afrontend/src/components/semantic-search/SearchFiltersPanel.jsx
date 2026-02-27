@@ -92,7 +92,7 @@ function SearchFiltersPanel({
   onSearch,
   loading,
   initialQuery = "",
-  initialKeywords = [],
+  initialKeywords,
   initialFilters: initialFilterOverrides = null,
   showSmartHint = false,
 }) {
@@ -119,17 +119,6 @@ function SearchFiltersPanel({
     setFilters(normalizedInitialFilters);
     setArrayInputs(buildArrayInputState(normalizedInitialFilters));
   }, [initialQuery, normalizedInitialFilters]);
-
-  useEffect(() => {
-    const debounceTimer = setTimeout(() => {
-      onSearch({
-        query: searchQuery.trim(),
-        ...filters,
-      });
-    }, 250);
-
-    return () => clearTimeout(debounceTimer);
-  }, [searchQuery, filters, onSearch]);
 
   const handleInputChange = (category, field, value) => {
     setFilters((prev) => ({
@@ -166,7 +155,8 @@ function SearchFiltersPanel({
     }));
   };
 
-  const handleApplyFilters = () => {
+  const handleApplyFilters = (event) => {
+    if (event?.preventDefault) event.preventDefault();
     onSearch({
       query: searchQuery.trim(),
       ...filters,
@@ -181,8 +171,20 @@ function SearchFiltersPanel({
     onSearch({ query: "", ...resetFilters });
   };
 
+  const handlePanelKeyDown = (event) => {
+    if (event.key !== "Enter") return;
+    const tagName = String(event.target?.tagName || "").toLowerCase();
+    const type = String(event.target?.type || "").toLowerCase();
+    if (tagName === "textarea") return;
+    if (tagName === "button") return;
+    if (tagName === "select") return;
+    if (["checkbox", "radio"].includes(type)) return;
+    event.preventDefault();
+    handleApplyFilters();
+  };
+
   return (
-    <div className="search-filters-panel">
+    <div className="search-filters-panel" onKeyDown={handlePanelKeyDown}>
       <div className="search-filters-panel__header">
         <h3>Search & Filters</h3>
         {showSmartHint && (
@@ -197,7 +199,7 @@ function SearchFiltersPanel({
         >
           Quick Search
         </label>
-        <div className="search-bar-section">
+        <form className="search-bar-section" onSubmit={handleApplyFilters}>
           <input
             id="semantic-quick-search"
             type="text"
@@ -205,19 +207,15 @@ function SearchFiltersPanel({
             placeholder="e.g., React developer 5 years Bangalore"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) =>
-              event.key === "Enter" ? handleApplyFilters() : null
-            }
           />
           <button
-            type="button"
+            type="submit"
             className="search-btn"
-            onClick={handleApplyFilters}
             disabled={loading}
           >
             {loading ? "Searching..." : "Search"}
           </button>
-        </div>
+        </form>
       </div>
 
       <div className="filters-divider" />

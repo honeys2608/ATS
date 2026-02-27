@@ -509,19 +509,24 @@ def upload_resume(
     from app.resume_parser import parse_resume
     
     try:
-        with open(file_path, "r", errors="ignore") as f:
-            resume_text = f.read()
-        
-        parsed_data = parse_resume(resume_text)
-        
+        parsed_result = parse_resume(file_path) or {}
+        parsed_data = parsed_result.get("data") if isinstance(parsed_result, dict) else {}
+        if not isinstance(parsed_data, dict):
+            parsed_data = {}
+
         # Update candidate with parsed data
-        candidate.full_name = parsed_data.get("name", candidate.full_name)
+        candidate.full_name = parsed_data.get("full_name", candidate.full_name)
         candidate.email = parsed_data.get("email", candidate.email)
         candidate.phone = parsed_data.get("phone", candidate.phone)
         candidate.skills = parsed_data.get("skills", candidate.skills)
         candidate.education = parsed_data.get("education", candidate.education)
-        candidate.experience = parsed_data.get("experience", candidate.experience)
+        candidate.experience = parsed_data.get("experience_years", candidate.experience)
         candidate.resume_url = file_path
+        candidate.parsed_data_json = parsed_data
+        candidate.parsed_json = parsed_data.get("parsed_json") if isinstance(parsed_data.get("parsed_json"), dict) else parsed_data
+        candidate.parser_version = parsed_data.get("parser_version", "v1")
+        candidate.raw_text = parsed_data.get("resume_text", "")
+        candidate.parsed_at = datetime.utcnow()
         candidate.status = "parsed"  # Transition to "Parsed" state
         candidate.updated_at = datetime.utcnow()
         

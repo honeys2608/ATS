@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.db import get_db
 from app import models, schemas
 from app.auth import get_current_user
@@ -43,9 +44,47 @@ def get_roles(
     current_user=Depends(get_current_user)
 ):
     roles = db.query(models.Role).all()
+    role_map = {}
 
-    # exclude hidden roles from response
-    visible_roles = [r for r in roles if r.name not in HIDDEN_ROLES]
+    # Start with persisted roles.
+    for role in roles:
+        role_name = str(getattr(role, "name", "") or "").strip().lower()
+        if not role_name or role_name in HIDDEN_ROLES:
+            continue
+        role_map[role_name] = {
+            "id": getattr(role, "id", None),
+            "name": role_name,
+        }
+
+    # Ensure core system roles are always available in dropdowns.
+    for role_name in SYSTEM_ROLES:
+        normalized = str(role_name or "").strip().lower()
+        if not normalized or normalized in HIDDEN_ROLES:
+            continue
+        if normalized not in role_map:
+            role_map[normalized] = {
+                "id": None,
+                "name": normalized,
+            }
+
+    # Include any legacy roles currently used by users but missing in Role table.
+    user_role_rows = (
+        db.query(models.User.role)
+        .filter(models.User.role.isnot(None))
+        .distinct()
+        .all()
+    )
+    for (raw_role,) in user_role_rows:
+        normalized = str(raw_role or "").strip().lower()
+        if not normalized or normalized in HIDDEN_ROLES:
+            continue
+        if normalized not in role_map:
+            role_map[normalized] = {
+                "id": None,
+                "name": normalized,
+            }
+
+    visible_roles = sorted(role_map.values(), key=lambda item: item["name"])
 
     if page is None:
         return visible_roles
@@ -177,6 +216,70 @@ def get_single_role(
         raise HTTPException(404, "Role not found")
 
     return role
+
+
+@router.get("/{role_id}/permissions")
+@require_permission("settings", "view")
+def get_role_permissions_by_id(
+    role_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    role = db.query(models.Role).filter(models.Role.id == role_id).first()
+    if not role:
+        raise HTTPException(404, "Role not found")
+    rows = (
+        db.query(models.Permission)
+        .filter(func.lower(models.Permission.role_name) == func.lower(role.name))
+        .all()
+    )
+    return {
+        "role": {"id": role.id, "name": role.name},
+        "permissions": [
+            {
+                "id": row.id,
+                "module_name": row.module_name,
+                "action_name": row.action_name,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.put("/{role_id}/permissions")
+@require_permission("settings", "update")
+def update_role_permissions_by_id(
+    role_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    role = db.query(models.Role).filter(models.Role.id == role_id).first()
+    if not role:
+        raise HTTPException(404, "Role not found")
+
+    entries = payload.get("permissions")
+    if not isinstance(entries, list):
+        raise HTTPException(400, "permissions must be a list")
+
+    db.query(models.Permission).filter(
+        func.lower(models.Permission.role_name) == func.lower(role.name)
+    ).delete(synchronize_session=False)
+
+    for entry in entries:
+        module_name = str(entry.get("module_name") or "").strip().lower()
+        action_name = str(entry.get("action_name") or "").strip().lower()
+        if not module_name or not action_name:
+            continue
+        db.add(
+            models.Permission(
+                role_name=role.name.lower(),
+                module_name=module_name,
+                action_name=action_name,
+            )
+        )
+    db.commit()
+    return {"message": "Role permissions updated"}
 
 
 @router.post("/seed-defaults")

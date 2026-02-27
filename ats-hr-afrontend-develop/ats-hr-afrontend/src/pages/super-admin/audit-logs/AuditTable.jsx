@@ -81,6 +81,7 @@ function Row({
                 <p><span className="font-semibold">Device:</span> {row.device || "--"}</p>
                 <p><span className="font-semibold">Browser:</span> {row.browser || "--"}</p>
                 <p><span className="font-semibold">OS:</span> {row.os || "--"}</p>
+                <p><span className="font-semibold">User Agent:</span> {row.user_agent || "--"}</p>
                 <p><span className="font-semibold">Location:</span> {row.location || "--"}</p>
                 <p>
                   <span className="font-semibold">Endpoint:</span>{" "}
@@ -91,7 +92,14 @@ function Row({
                 <p><span className="font-semibold">Failure Reason:</span> {row.failure_reason || "--"}</p>
                 <p><span className="font-semibold">Created At:</span> {exact(row.created_at || row.timestamp)}</p>
               </div>
-              <AuditChangeDiff oldValue={row.old_value} newValue={row.new_value} actionType={row.action_type} />
+              <AuditChangeDiff
+                oldValue={row.old_value}
+                newValue={row.new_value}
+                actionType={row.action_type}
+                moduleName={row.module}
+                endpoint={row.endpoint}
+                entityType={row.entity_type}
+              />
             </div>
           </div>
         </td>

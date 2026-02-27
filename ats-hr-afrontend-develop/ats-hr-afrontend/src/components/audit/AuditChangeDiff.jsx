@@ -47,9 +47,17 @@ function shallowDiff(oldValue, newValue) {
   return changes;
 }
 
-export default function AuditChangeDiff({ oldValue, newValue, actionType }) {
+export default function AuditChangeDiff({ oldValue, newValue, actionType, moduleName, endpoint, entityType }) {
   const action = String(actionType || "").toLowerCase();
-  if (action.includes("login")) return null;
+  const moduleLower = String(moduleName || "").toLowerCase();
+  const endpointLower = String(endpoint || "").toLowerCase();
+  const entityTypeLower = String(entityType || "").toLowerCase();
+  const isLoginEvent =
+    action.includes("login") ||
+    moduleLower.includes("auth") ||
+    endpointLower.includes("/auth/login") ||
+    entityTypeLower === "login";
+  if (isLoginEvent) return null;
 
   const hasAny = hasMeaningfulValue(oldValue) || hasMeaningfulValue(newValue);
   if (!hasAny) return null;

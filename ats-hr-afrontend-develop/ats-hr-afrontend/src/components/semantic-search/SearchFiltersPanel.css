@@ -15,8 +15,8 @@
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   padding: 24px;
-  overflow-y: auto;
-  max-height: calc(100vh - 200px);
+  overflow: visible;
+  max-height: none;
 }
 
 .search-filters-panel__header h3 {

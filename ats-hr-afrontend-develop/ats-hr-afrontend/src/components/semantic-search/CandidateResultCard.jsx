@@ -11,6 +11,18 @@ const getValue = (...values) => {
   return null;
 };
 
+const parseMaybeJson = (value) => {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
 const toDisplayText = (value) => {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
@@ -27,6 +39,19 @@ const toNumericScore = (value) => {
   if (!Number.isFinite(parsed)) return null;
   return Math.min(100, Math.max(0, Math.round(parsed)));
 };
+
+const formatStatusLabel = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .map((token) => {
+      const lower = token.toLowerCase();
+      if (lower === "am") return "AM";
+      return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+    })
+    .join(" ");
 
 const deriveNameFromEmail = (email) => {
   if (!email || typeof email !== "string" || !email.includes("@")) return "";
@@ -113,11 +138,59 @@ export default function CandidateResultCard({
   onSelect,
   onViewDetails,
 }) {
+  const parsed = parseMaybeJson(getValue(
+    candidate.parsed_data_json,
+    candidate.parsedDataJson,
+    candidate.parsed_data,
+    candidate.parsedData,
+    candidate.parsed_resume?.data,
+    candidate.parsed_resume?.parsed_data,
+    candidate.parsedResume?.data,
+    candidate.parsedResume?.parsed_data,
+  )) || {};
+  const workHistory = Array.isArray(getValue(
+    candidate.work_history,
+    candidate.employment_history,
+    candidate.experience_history,
+    parsed.work_history,
+    parsed.work_experience,
+    parsed.experience,
+  ))
+    ? getValue(
+      candidate.work_history,
+      candidate.employment_history,
+      candidate.experience_history,
+      parsed.work_history,
+      parsed.work_experience,
+      parsed.experience,
+    )
+    : [];
+  const firstWork = Array.isArray(workHistory) && workHistory.length > 0
+    ? workHistory[0] || {}
+    : {};
+
   const candidateId = getValue(candidate.id, candidate._id, candidate.candidate_id);
   const name = getValue(candidate.full_name, candidate.name) ||
     deriveNameFromEmail(candidate.email) ||
     "Candidate";
+  const designation = toDisplayText(getValue(
+    candidate.current_role,
+    candidate.designation,
+    candidate.designation_title,
+    candidate.job_title,
+    candidate.title,
+    parsed.current_role,
+    parsed.designation,
+    parsed.designation_title,
+    parsed.job_title,
+    parsed.title,
+    firstWork.role,
+    firstWork.designation,
+    firstWork.title,
+  ));
   const email = getValue(candidate.email);
+  const status = getValue(candidate.status, candidate.application_status, parsed.status);
+  const statusLabel = status ? formatStatusLabel(status) : null;
   const phone = getValue(candidate.phone, candidate.mobile, candidate.phone_number);
   const location = toDisplayText(getValue(
     candidate.current_location,
@@ -196,10 +269,16 @@ export default function CandidateResultCard({
         <div className="card-info">
           <div className="card-title-row">
             <h3 className="card-name">{name}</h3>
+            {statusLabel && (
+              <span className="card-status-badge">{statusLabel}</span>
+            )}
             {matchScore !== null && matchScore > 0 && (
               <span className="match-badge">{matchScore}% Match</span>
             )}
           </div>
+          {designation && (
+            <p className="card-designation">{designation}</p>
+          )}
           <div className="card-contact">
             {email && (
               <span className="contact-link">

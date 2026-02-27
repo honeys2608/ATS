@@ -492,12 +492,82 @@ const extractParsedCandidateData = (candidate) => {
       : null;
 
   const parsedDataJson = valueOr(
+    candidate.parsed_json,
+    candidate.parsedJson,
     candidate.parsed_data_json,
     candidate.parsedDataJson,
   );
 
   const parsed = valueOr(parsedDataJson, parsedResumeData, {});
-  return parsed && typeof parsed === "object" ? parsed : {};
+  if (!parsed || typeof parsed !== "object") return {};
+
+  // Canonical parser schema support -> flatten for existing UI selectors.
+  if (parsed.personal || parsed.professional || parsed.skills || parsed.experience) {
+    const personal = parsed.personal || {};
+    const professional = parsed.professional || {};
+    const skillsObj = parsed.skills || {};
+    const educationList = Array.isArray(parsed.education) ? parsed.education : [];
+    const firstEducation = educationList[0] || {};
+    const experienceList = Array.isArray(parsed.experience) ? parsed.experience : [];
+    const certList = Array.isArray(parsed.certifications) ? parsed.certifications : [];
+
+    return {
+      ...parsed,
+      full_name: personal.full_name || "",
+      name: personal.full_name || "",
+      email: personal.email || "",
+      phone: personal.phone || "",
+      dob: personal.dob || "",
+      gender: personal.gender || "",
+      city: personal.city || "",
+      state: personal.state || "",
+      country: personal.country || "",
+      pincode: personal.pincode || "",
+      current_address: personal.current_address || "",
+      permanent_address: personal.permanent_address || "",
+      linkedin_url: personal.linkedin || "",
+      portfolio_url: personal.portfolio || "",
+      current_role: professional.primary_role || professional.current_designation || "",
+      current_designation: professional.current_designation || "",
+      current_company: professional.current_company || "",
+      notice_period_days: professional.notice_period_days,
+      notice_period:
+        professional.notice_period_days != null
+          ? String(professional.notice_period_days)
+          : "",
+      current_ctc: professional.current_ctc,
+      expected_ctc: professional.expected_ctc,
+      preferred_location: professional.preferred_location || "",
+      ready_to_relocate: professional.ready_to_relocate,
+      experience_years: professional.total_experience_years,
+      skills: Array.isArray(skillsObj.all) ? skillsObj.all : [],
+      primary_skills: Array.isArray(skillsObj.primary) ? skillsObj.primary : [],
+      secondary_skills: Array.isArray(skillsObj.secondary) ? skillsObj.secondary : [],
+      certifications: certList,
+      education_history: educationList,
+      education: {
+        degree: firstEducation.degree || "",
+        institution: firstEducation.institution || "",
+        cgpa: firstEducation.score || "",
+      },
+      work_history: experienceList.map((exp) => ({
+        company: exp.company || "",
+        designation: exp.designation || "",
+        role: exp.designation || "",
+        start_date: exp.start_date || "",
+        end_date: exp.end_date || "",
+        is_current: Boolean(exp.is_current),
+        duration: exp.duration_text || "",
+        years: exp.duration_text || "",
+        project_done: exp.summary || "",
+        skills_learned: Array.isArray(exp.tech_stack) ? exp.tech_stack : [],
+      })),
+      resume_text: parsed.raw_text || "",
+      parser_version: parsed.parser_version || "",
+    };
+  }
+
+  return parsed;
 };
 
 const asDate = (value) => {
