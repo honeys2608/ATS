@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Q
 
 from sqlalchemy.orm import Session
 
-from typing import List, Optional
+from typing import List, Optional,Any
 
 from datetime import datetime
 
@@ -3671,7 +3671,6 @@ def _persist_parsed_payload(candidate: models.Candidate, parsed: dict, data: dic
     if not isinstance(parsed_json, dict):
         parsed_json = data if isinstance(data, dict) else {}
 
-    _persist_parsed_payload(candidate, parsed, data)
     candidate.parsed_json = parsed_json
     candidate.parser_version = (data.get("parser_version") if isinstance(data, dict) else None) or "v1"
     candidate.raw_text = (data.get("resume_text") if isinstance(data, dict) else None) or ""
