@@ -24,7 +24,7 @@ nltk==3.8.1
 spacy==3.7.5
 transformers==4.44.2
 pyresparser==1.0.6
-skill-extractor-cogito==1.2.1
+#skill-extractor-cogito==1.2.1
 sentence-transformers>=3.0.0
 huggingface-hub>=0.17.0
 torch>=2.1.0
