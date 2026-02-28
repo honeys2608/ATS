@@ -78,56 +78,23 @@ export default function Register() {
     }
 
     const safeEmail = email.trim().toLowerCase();
-    const derivedUsername = safeEmail.split("@")[0]?.replace(/[^a-z0-9_.-]/g, "") || "superadmin";
+    const derivedUsername = safeEmail.split("@")[0]?.replace(/[^a-z0-9_.-]/g, "") || "admin";
     const payload = {
       username: derivedUsername,
       full_name: username.trim(),
       email: safeEmail,
       password,
-      role: "super_admin",
+      role: "admin",
     };
 
     try {
       setLoading(true);
 
       await api.post("/auth/register", payload);
-      const loginResp = await api.post("/auth/login", {
-        email: safeEmail,
-        password,
-      });
-
-      const token =
-        loginResp?.data?.access_token ||
-        loginResp?.data?.accessToken ||
-        loginResp?.data?.token;
-      const role =
-        loginResp?.data?.role ||
-        loginResp?.data?.user?.role ||
-        "super_admin";
-
-      if (!token) {
-        throw new Error("Registration succeeded but login token was not returned");
-      }
-
-      localStorage.setItem("access_token", token);
-      localStorage.setItem("role", String(role).toLowerCase());
-
-      const userFromApi = loginResp?.data?.user;
-      if (userFromApi && typeof userFromApi === "object") {
-        localStorage.setItem("user", JSON.stringify(userFromApi));
-      } else {
-        localStorage.setItem(
-          "user",
-          JSON.stringify({
-            full_name: username.trim(),
-            email: safeEmail,
-            role: "super_admin",
-          }),
-        );
-      }
-
-      api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-      window.location.assign("/super-admin/dashboard");
+      setStep("success");
+      setTimeout(() => {
+        navigate("/login");
+      }, 1200);
     } catch (err) {
       console.error("Register error:", err);
 

@@ -2,6 +2,7 @@ import sys
 import hashlib
 import secrets
 from datetime import datetime, timedelta
+from sqlalchemy import inspect
 from app.db import SessionLocal, engine
 from app import models
 
@@ -10,10 +11,63 @@ def get_password_hash(password):
     hash_value = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000).hex()
     return f"{salt}:{hash_value}"
 
+def seed_roles_safe(db):
+    required_roles = [
+        "account_manager",
+        "accounts",
+        "admin",
+        "candidate",
+        "candidate2",
+        "ceo",
+        "consultant",
+        "consultant_support",
+        "employee",
+        "finance_officer",
+        "internal_hr",
+        "recruiter",
+        "recruiter2",
+        "super_admin",
+    ]
+
+    role_model = getattr(models, "Role", None)
+    if role_model is None:
+        print("⚠️ Role model not found on models. Skipping safe role seed.")
+        return
+
+    try:
+        table_name = getattr(role_model, "__tablename__", "roles")
+        if not inspect(db.bind).has_table(table_name):
+            print(f"⚠️ Table '{table_name}' not found. Skipping safe role seed.")
+            return
+    except Exception as e:
+        print(f"⚠️ Unable to inspect roles table. Skipping safe role seed: {e}")
+        return
+
+    try:
+        existing_roles = {
+            str(name).strip().lower()
+            for (name,) in db.query(role_model.name).all()
+            if name
+        }
+        missing_roles = [r for r in required_roles if r.lower() not in existing_roles]
+
+        if not missing_roles:
+            print("✅ Roles already present. No missing roles to seed.")
+            return
+
+        for role_name in missing_roles:
+            db.add(role_model(name=role_name))
+        db.commit()
+        print(f"✅ Seeded missing roles safely: {', '.join(missing_roles)}")
+    except Exception as e:
+        db.rollback()
+        print(f"⚠️ Failed safe role seed. Rolled back role inserts: {e}")
+
 def seed_database():
     models.Base.metadata.create_all(bind=engine)
     
     db = SessionLocal()
+    seed_roles_safe(db)
     
     print("Clearing existing data...")
     db.query(models.CommunicationLog).delete()
