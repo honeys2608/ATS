@@ -118,7 +118,9 @@ const EMOJI_REGEX =
 const JOB_TITLE_ALLOWED_REGEX = /^[A-Za-z0-9 ]+$/;
 const CLIENT_TA_ALLOWED_REGEX = /^[A-Za-z0-9@.+\-()' ]+$/;
 const LOCATION_ALLOWED_REGEX = /^[A-Za-z0-9,\- ]+$/;
+const CLIENT_NAME_ALLOWED_REGEX = /^[A-Za-z0-9&.,'()\- ]+$/;
 const SKILL_ALLOWED_REGEX = /^[A-Za-z0-9+.#/\- ]+$/;
+const OTHER_CLIENT_OPTION_VALUE = "__other__";
 
 const normalizeSpaces = (value) =>
   typeof value === "string" ? value.replace(/\s+/g, " ").trim() : value;
@@ -287,6 +289,7 @@ const validateJobForm = ({ form, clients, requirements, editingJobId }) => {
   const errors = {};
   const warnings = {};
   const title = normalizeSpaces(form.title);
+  const clientName = normalizeSpaces(form.client_name);
   const clientTa = normalizeSpaces(form.client_ta);
   const location = normalizeSpaces(form.location);
   const jdText = normalizeTextarea(form.jd_text);
@@ -307,6 +310,18 @@ const validateJobForm = ({ form, clients, requirements, editingJobId }) => {
 
   if (!form.client_id) {
     errors.client_id = "Please select a client";
+  } else if (form.client_id === OTHER_CLIENT_OPTION_VALUE) {
+    if (!clientName) {
+      errors.client_name = "Please enter client name";
+    } else if (
+      clientName.length < 2 ||
+      clientName.length > 80 ||
+      !CLIENT_NAME_ALLOWED_REGEX.test(clientName) ||
+      hasEmoji(clientName)
+    ) {
+      errors.client_name =
+        "Client name must be 2-80 characters (letters, numbers, spaces, &, commas, dots, apostrophes, brackets, hyphens)";
+    }
   } else {
     const exists = clients.some(
       (client) => String(client.id) === String(form.client_id),
@@ -481,12 +496,13 @@ const validateJobForm = ({ form, clients, requirements, editingJobId }) => {
     errors.notes_for_recruiter = "Emojis are not allowed in recruiter notes";
   }
 
-  if (form.client_id && title) {
-    const selectedClient = clients.find(
-      (client) => String(client.id) === String(form.client_id),
-    );
+  if (title && (form.client_id || clientName)) {
+    const selectedClient =
+      form.client_id && form.client_id !== OTHER_CLIENT_OPTION_VALUE
+        ? clients.find((client) => String(client.id) === String(form.client_id))
+        : null;
     const selectedClientName = normalizeSpaces(
-      selectedClient?.client_name || selectedClient?.name || "",
+      selectedClient?.client_name || selectedClient?.name || clientName || "",
     ).toLowerCase();
 
     const duplicate = requirements.find((req) => {
@@ -863,7 +879,11 @@ export default function RequirementsList() {
       );
       if (matchByName) {
         clientId = matchByName.id;
+      } else if (!clientId) {
+        clientId = OTHER_CLIENT_OPTION_VALUE;
       }
+    } else if (!clientId) {
+      clientId = OTHER_CLIENT_OPTION_VALUE;
     }
 
     const normalizedMode = (() => {
@@ -1063,6 +1083,8 @@ export default function RequirementsList() {
     let nextValue = value;
     if (field === "title") {
       nextValue = String(value).replace(/[^A-Za-z0-9 ]/g, "");
+    } else if (field === "client_name") {
+      nextValue = String(value).replace(/[^A-Za-z0-9&.,'()\- ]/g, "");
     } else if (field === "client_ta") {
       nextValue = String(value).replace(/[^A-Za-z0-9@.+\-()' ]/g, "");
     } else if (field === "location") {
@@ -1083,6 +1105,16 @@ export default function RequirementsList() {
 
     setJobForm((prev) => {
       const updated = { ...prev, [field]: nextValue };
+      if (field === "client_id" && nextValue !== OTHER_CLIENT_OPTION_VALUE) {
+        const selectedClient = clients.find(
+          (client) => String(client.id) === String(nextValue),
+        );
+        updated.client_name =
+          selectedClient?.client_name || selectedClient?.name || "";
+      }
+      if (field === "client_id" && !nextValue) {
+        updated.client_name = "";
+      }
       if (field === "mode" && nextValue === "remote") {
         updated.location = "Remote";
       }
@@ -1432,6 +1464,7 @@ export default function RequirementsList() {
     const normalizedForm = {
       ...jobForm,
       title: toTitleCase(normalizeSpaces(jobForm.title)),
+      client_name: toTitleCase(normalizeSpaces(jobForm.client_name)),
       client_ta: (() => {
         const candidateTa = normalizeSpaces(jobForm.client_ta);
         return looksLikeContactValue(candidateTa)
@@ -1462,6 +1495,7 @@ export default function RequirementsList() {
     setJobTouched({
       title: true,
       client_id: true,
+      client_name: true,
       client_ta: true,
       mode: true,
       experience_min: true,
@@ -1493,9 +1527,13 @@ export default function RequirementsList() {
     setJobServerErrors({});
 
     try {
-      const selectedClient = clients.find(
-        (client) => String(client.id) === String(normalizedForm.client_id),
-      );
+      const selectedClient =
+        normalizedForm.client_id &&
+        normalizedForm.client_id !== OTHER_CLIENT_OPTION_VALUE
+          ? clients.find(
+              (client) => String(client.id) === String(normalizedForm.client_id),
+            )
+          : null;
       const experienceMin = Number(normalizedForm.experience_min);
       const experienceMax = Number(normalizedForm.experience_max);
       const hasCtcRange = Boolean(normalizedForm.ctc_min && normalizedForm.ctc_max);
@@ -1514,7 +1552,11 @@ export default function RequirementsList() {
       const payload = {
         job_title: normalizedForm.title,
         date_created: new Date().toISOString().split("T")[0],
-        client_id: normalizedForm.client_id || null,
+        client_id:
+          normalizedForm.client_id &&
+          normalizedForm.client_id !== OTHER_CLIENT_OPTION_VALUE
+            ? normalizedForm.client_id
+            : null,
         client_name:
           selectedClient?.client_name ||
           selectedClient?.name ||
@@ -2614,15 +2656,16 @@ export default function RequirementsList() {
                       value={jobForm.client_id}
                       onChange={(e) => {
                         const clientId = e.target.value;
-                        const selectedClient = clients.find(
-                          (client) => String(client.id) === String(clientId),
-                        );
                         handleJobFormChange("client_id", clientId);
-                        setJobForm((prev) => ({
-                          ...prev,
-                          client_name:
-                            selectedClient?.client_name || selectedClient?.name || "",
-                        }));
+                        if (clientId === OTHER_CLIENT_OPTION_VALUE) {
+                          setJobForm((prev) => ({
+                            ...prev,
+                            client_name:
+                              prev.client_id === OTHER_CLIENT_OPTION_VALUE
+                                ? prev.client_name
+                                : "",
+                          }));
+                        }
                       }}
                       onBlur={() => markFieldTouched("client_id")}
                       className={getFieldClasses("client_id")}
@@ -2633,11 +2676,32 @@ export default function RequirementsList() {
                           {client.client_name || client.name}
                         </option>
                       ))}
+                      <option value={OTHER_CLIENT_OPTION_VALUE}>Other</option>
                     </select>
                     {getFieldError("client_id") && (
                       <p className="mt-1 text-xs text-red-600">
                         {getFieldError("client_id")}
                       </p>
+                    )}
+                    {jobForm.client_id === OTHER_CLIENT_OPTION_VALUE && (
+                      <div className="mt-2">
+                        <input
+                          type="text"
+                          value={jobForm.client_name}
+                          onChange={(e) =>
+                            handleJobFormChange("client_name", e.target.value)
+                          }
+                          onBlur={() => handleJobFieldBlur("client_name")}
+                          maxLength={80}
+                          placeholder="Enter client name"
+                          className={getFieldClasses("client_name")}
+                        />
+                        {getFieldError("client_name") && (
+                          <p className="mt-1 text-xs text-red-600">
+                            {getFieldError("client_name")}
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
 
