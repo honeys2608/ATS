@@ -288,6 +288,8 @@ def _resolve_client(
     db: Session,
     client_id: str,
     client_name: str,
+    auto_create: bool = False,
+    creator_user_id: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     normalized_id = _normalize_spaces(client_id)
     normalized_name = _normalize_spaces(client_name)
@@ -328,6 +330,17 @@ def _resolve_client(
             resolved_id = _normalize_spaces(existing_job_client[0]) or normalized_id
             resolved_name = _normalize_spaces(existing_job_client[1]) or normalized_name
             return resolved_id, resolved_name
+
+    if auto_create and normalized_name:
+        created_client = models.Client(
+            client_name=_to_title_case(normalized_name),
+            status="active",
+            created_by=creator_user_id,
+            am_id=creator_user_id,
+        )
+        db.add(created_client)
+        db.flush()
+        return str(created_client.id), _normalize_spaces(created_client.client_name)
 
     return None, None
 
@@ -370,6 +383,8 @@ def _validate_and_normalize_job_payload(
     payload: Dict[str, Any],
     db: Session,
     editing_job_id: Optional[str] = None,
+    allow_create_client: bool = False,
+    creator_user_id: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], List[str]]:
     errors: Dict[str, str] = {}
     warnings: List[str] = []
@@ -402,7 +417,13 @@ def _validate_and_normalize_job_payload(
     if not client_id and not client_name:
         errors["client_id"] = "Please select a client from the dropdown"
     else:
-        resolved_client_id, resolved_client_name = _resolve_client(db, client_id, client_name)
+        resolved_client_id, resolved_client_name = _resolve_client(
+            db,
+            client_id,
+            client_name,
+            auto_create=allow_create_client,
+            creator_user_id=creator_user_id,
+        )
         if not resolved_client_id:
             errors["client_id"] = "Selected client does not exist in database"
         else:
@@ -821,6 +842,8 @@ def create_requirement(
     normalized, warnings = _validate_and_normalize_job_payload(
         payload=incoming_payload,
         db=db,
+        allow_create_client=True,
+        creator_user_id=user_id,
     )
 
     requested_status = normalized.get("status", "open")
@@ -1000,6 +1023,8 @@ def update_requirement(
         payload=merged_payload,
         db=db,
         editing_job_id=job_id,
+        allow_create_client=True,
+        creator_user_id=user_id,
     )
 
     if data.date_created:
