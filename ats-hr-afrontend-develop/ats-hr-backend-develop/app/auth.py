@@ -498,7 +498,7 @@ def register(data: schemas.UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(400, detail={"field": "email", "message": "Email already registered"})
     if db.query(models.User).filter(models.User.username == data.username).first():
         raise HTTPException(400, detail={"field": "username", "message": "Username already taken"})
-    role = data.role.lower() if data.role else "employee"
+    role = data.role.lower() if data.role else "super_admin"
     user = models.User(
         username=data.username,
         email=data.email,
