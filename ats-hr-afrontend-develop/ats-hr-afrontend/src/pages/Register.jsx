@@ -77,25 +77,57 @@ export default function Register() {
       return;
     }
 
+    const safeEmail = email.trim().toLowerCase();
+    const derivedUsername = safeEmail.split("@")[0]?.replace(/[^a-z0-9_.-]/g, "") || "superadmin";
     const payload = {
+      username: derivedUsername,
       full_name: username.trim(),
-      email: email.trim(),
-      phone: verificationMethod === "phone" ? phone.trim() : null,
+      email: safeEmail,
       password,
-      confirm_password: confirmPassword,
-      verification_method: verificationMethod, // email or phone
+      role: "super_admin",
     };
 
     try {
       setLoading(true);
 
-      const resp = await api.post("/auth/candidate/register", payload);
+      await api.post("/auth/register", payload);
+      const loginResp = await api.post("/auth/login", {
+        email: safeEmail,
+        password,
+      });
 
-      // Backend returns user_id and sends OTP
-      const returnedUserId = resp?.data?.user_id || resp?.data?.id;
-      setUserId(returnedUserId);
-      setStep("otp");
-      setError("");
+      const token =
+        loginResp?.data?.access_token ||
+        loginResp?.data?.accessToken ||
+        loginResp?.data?.token;
+      const role =
+        loginResp?.data?.role ||
+        loginResp?.data?.user?.role ||
+        "super_admin";
+
+      if (!token) {
+        throw new Error("Registration succeeded but login token was not returned");
+      }
+
+      localStorage.setItem("access_token", token);
+      localStorage.setItem("role", String(role).toLowerCase());
+
+      const userFromApi = loginResp?.data?.user;
+      if (userFromApi && typeof userFromApi === "object") {
+        localStorage.setItem("user", JSON.stringify(userFromApi));
+      } else {
+        localStorage.setItem(
+          "user",
+          JSON.stringify({
+            full_name: username.trim(),
+            email: safeEmail,
+            role: "super_admin",
+          }),
+        );
+      }
+
+      api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+      window.location.assign("/super-admin/dashboard");
     } catch (err) {
       console.error("Register error:", err);
 
