@@ -192,12 +192,17 @@ function Login({ onLogin }) {
         typeof err?.response?.data?.detail === "object"
           ? err?.response?.data?.detail?.field
           : null;
+      const normalizedMsg =
+        err?.response?.status === 401 &&
+        (detailField === "password" || detailField === "general")
+          ? "Invalid password, retry"
+          : msg;
       if (detailField === "email") {
-        setEmailError(msg);
+        setEmailError(normalizedMsg);
       } else if (detailField === "password") {
-        setPasswordError(msg);
+        setPasswordError(normalizedMsg);
       } else {
-        setError(msg);
+        setError(normalizedMsg);
       }
       setTimeout(() => errorRef.current?.focus?.(), 50);
     } finally {

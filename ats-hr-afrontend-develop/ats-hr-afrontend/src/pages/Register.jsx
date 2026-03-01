@@ -78,13 +78,13 @@ export default function Register() {
     }
 
     const safeEmail = email.trim().toLowerCase();
-    const derivedUsername = safeEmail.split("@")[0]?.replace(/[^a-z0-9_.-]/g, "") || "admin";
+    const derivedUsername = safeEmail.split("@")[0]?.replace(/[^a-z0-9_.-]/g, "") || "candidate";
     const payload = {
       username: derivedUsername,
       full_name: username.trim(),
       email: safeEmail,
       password,
-      role: "admin",
+      role: "candidate",
     };
 
     try {
