@@ -12,7 +12,7 @@ const resolveApiAssetBaseUrl = () => {
 
   const configured = import.meta.env?.VITE_API_BASE_URL || fallback;
   try {
-    return new URL(configured).origin;
+    return String(configured).replace(/\/+$/, "");
   } catch {
     return String(configured || fallback).replace(/\/+$/, "");
   }
