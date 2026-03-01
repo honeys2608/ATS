@@ -67,7 +67,10 @@ api.interceptors.response.use(
       }
     }
 
-    if (error.response?.status === 401) {
+    const requestUrl = String(error?.config?.url || "");
+    const isLoginRequest = requestUrl.includes("/auth/login");
+
+    if (error.response?.status === 401 && !isLoginRequest) {
       localStorage.removeItem("access_token");
       localStorage.removeItem("token");
       localStorage.removeItem("role");
