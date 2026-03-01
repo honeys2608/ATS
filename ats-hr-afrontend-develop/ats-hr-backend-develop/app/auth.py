@@ -309,12 +309,12 @@ def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(ge
                     status="failed",
                     ip_address=ip_addr,
                     user_agent=ua,
-                    message="Account locked due to multiple failed attempts" if locked_now else "Incorrect password",
+                    message="Account locked due to multiple failed attempts" if locked_now else "Invalid password, retry",
                 )
             )
             db.commit()
             action = "ACCOUNT_LOCKED" if locked_now else "USER_LOGIN_FAILED"
-            reason = "Account locked due to multiple failed attempts" if locked_now else "Incorrect password"
+            reason = "Account locked due to multiple failed attempts" if locked_now else "Invalid password, retry"
             code = 403 if locked_now else 401
             log_audit(
                 actor={"id": user.id, "email": user.email, "role": user.role, "name": user.full_name or user.username, "client_id": user.client_id},
@@ -402,7 +402,7 @@ def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(ge
                 status="failed",
                 ip_address=ip_addr,
                 user_agent=ua,
-                message="Incorrect password",
+                message="Invalid password, retry",
             )
         )
         db.commit()
@@ -416,14 +416,14 @@ def login(data: schemas.LoginRequest, request: Request, db: Session = Depends(ge
             entity_name=candidate.full_name or candidate.email,
             status="failed",
             severity=map_audit_severity(action="USER_LOGIN_FAILED", status="failed"),
-            failure_reason="Incorrect password",
+            failure_reason="Invalid password, retry",
             endpoint=str(request.url.path),
             http_method=request.method,
             response_code=401,
             ip_address=ip_addr,
             user_agent=ua,
         )
-        raise HTTPException(401, detail={"field": "password", "message": "Incorrect password"})
+        raise HTTPException(401, detail={"field": "password", "message": "Invalid password, retry"})
 
     token = create_access_token({"sub": candidate.id, "email": candidate.email, "role": "candidate", "type": "candidate"})
     db.add(
@@ -498,7 +498,7 @@ def register(data: schemas.UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(400, detail={"field": "email", "message": "Email already registered"})
     if db.query(models.User).filter(models.User.username == data.username).first():
         raise HTTPException(400, detail={"field": "username", "message": "Username already taken"})
-    role = data.role.lower() if data.role else "admin"
+    role = data.role.lower() if data.role else "candidate"
     user = models.User(
         username=data.username,
         email=data.email,
