@@ -132,18 +132,27 @@ def seed_permissions_to_db():
     print(f"Permissions upsert complete. Added: {added}")
 
 # ---------------- FASTAPI APP ----------------
+FASTAPI_ROOT_PATH = os.getenv(
+    "FASTAPI_ROOT_PATH",
+    "/ats-ats-hr-afrontend-develop-at2",
+).strip()
+if FASTAPI_ROOT_PATH == "/":
+    FASTAPI_ROOT_PATH = ""
+
 app = FastAPI(
     title="Akshu HR Platform",
     description="AI-Powered End-to-End HR Automation Platform",
     version="1.0.0",
-    root_path="/ats-ats-hr-afrontend-develop-at2"
+    root_path=FASTAPI_ROOT_PATH,
+    docs_url="/docs",
+    openapi_url="/openapi.json",
 )
 register_audit_middleware(app)
 register_maintenance_middleware(app)
 
 
 # ---------------- CORS ----------------
-origins = [
+default_origins = [
     "http://localhost:3000",
     "http://localhost:5000",
     "http://localhost:5001",
@@ -154,11 +163,19 @@ origins = [
     "http://127.0.0.1:5001",
     "http://127.0.0.1:5002",
     "http://127.0.0.1:5173",
+    "https://hammerhead-app-2ndu8.ondigitalocean.app",
 ]
+
+cors_origins_env = os.getenv("BACKEND_CORS_ORIGINS", "").strip()
+if cors_origins_env:
+    origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+else:
+    origins = default_origins
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https://.*\.ondigitalocean\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
