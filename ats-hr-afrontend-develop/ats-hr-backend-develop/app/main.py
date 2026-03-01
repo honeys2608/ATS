@@ -135,7 +135,8 @@ def seed_permissions_to_db():
 app = FastAPI(
     title="Akshu HR Platform",
     description="AI-Powered End-to-End HR Automation Platform",
-    version="1.0.0"
+    version="1.0.0",
+    root_path="/ats-ats-hr-afrontend-develop-at2"
 )
 register_audit_middleware(app)
 register_maintenance_middleware(app)
