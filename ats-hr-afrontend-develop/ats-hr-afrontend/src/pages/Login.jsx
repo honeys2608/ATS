@@ -1,6 +1,5 @@
 // src/pages/Login.jsx
 import React, { useState, useRef, useEffect } from "react";
-import { validateEmail } from "../utils/validators";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../api/axios";
 import {
@@ -22,37 +21,11 @@ const ROLE_DASHBOARD_MAP = {
   client: "/client/dashboard",
   consultant: "/consultant/dashboard",
   vendor: "/vendor/dashboard",
-  finance_officer: "/finance",
-  "finance officer": "/finance",
-};
-
-const normalizeRole = (role) =>
-  String(role || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_");
-
-const validateEmailDomain = (emailValue) => {
-  const value = String(emailValue || "").trim().toLowerCase();
-  if (!value || !value.includes("@")) return "Enter a valid email domain";
-  const parts = value.split("@");
-  if (parts.length !== 2) return "Enter a valid email domain";
-  const domain = parts[1] || "";
-  if (!domain || domain.startsWith(".") || domain.endsWith(".")) return "Enter a valid email domain";
-  if (domain.includes("..")) return "Enter a valid email domain";
-  const labels = domain.split(".");
-  if (labels.length < 2) return "Enter a valid email domain";
-  const tld = labels[labels.length - 1] || "";
-  if (!/^[a-z]{2,}$/i.test(tld)) return "Enter a valid email domain";
-  return null;
 };
 
 function Login({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [emailError, setEmailError] = useState("");
-  const [passwordError, setPasswordError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -67,35 +40,16 @@ function Login({ onLogin }) {
   // -----------------------------
   // FRONTEND VALIDATION
   // -----------------------------
-  // Login password validation (keep minimal; strict rules apply in registration/reset flows)
-  const validatePassword = (pwd) => {
-    if (!pwd || !pwd.trim()) return "Password is required";
-    if (pwd.length > 128) return "Password cannot exceed 128 characters";
-    return null;
-  };
-
-  // Combined validation for login
   const validateLogin = () => {
-    const emailErr = validateEmail(email) || validateEmailDomain(email);
-    const pwdErr = validatePassword(password);
-    setEmailError(emailErr || "");
-    setPasswordError(pwdErr || "");
-    if (emailErr) return emailErr;
-    if (pwdErr) return pwdErr;
+    if (!email.trim()) return "Email or username is required";
+    if (!password.trim()) return "Password is required";
+    if (password.length < 3) return "Password must be at least 3 characters";
     return null;
   };
 
   // -----------------------------
   // SUBMIT
   // -----------------------------
-  const handleEmailBlur = () => {
-    setEmailError(validateEmail(email) || validateEmailDomain(email) || "");
-  };
-
-  const handlePasswordBlur = () => {
-    setPasswordError(validatePassword(password) || "");
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -134,7 +88,7 @@ function Login({ onLogin }) {
       // PERSIST AUTH STATE
       // -----------------------------
       localStorage.setItem("access_token", token);
-      localStorage.setItem("role", normalizeRole(roleFromApi));
+      localStorage.setItem("role", String(roleFromApi).toLowerCase());
 
       if (userFromApi && typeof userFromApi === "object") {
         localStorage.setItem("user", JSON.stringify(userFromApi));
@@ -151,7 +105,7 @@ function Login({ onLogin }) {
       // -----------------------------
       // ROLE-BASED REDIRECT
       // -----------------------------
-      const role = normalizeRole(roleFromApi);
+      const role = String(roleFromApi).toLowerCase();
       const dashboardPath = ROLE_DASHBOARD_MAP[role] || "/dashboard";
 
       navigate(dashboardPath, { replace: true });
@@ -179,31 +133,15 @@ function Login({ onLogin }) {
       }
 
       const msg =
+        err?.response?.data?.message ||
+        err?.response?.data?.detail ||
         (typeof err?.response?.data?.detail === "object"
           ? err?.response?.data?.detail?.message
           : null) ||
-        err?.response?.data?.message ||
-        (typeof err?.response?.data?.detail === "string"
-          ? err?.response?.data?.detail
-          : null) ||
         err?.message ||
         "Login failed - please try again";
-      const detailField =
-        typeof err?.response?.data?.detail === "object"
-          ? err?.response?.data?.detail?.field
-          : null;
-      const normalizedMsg =
-        err?.response?.status === 401 &&
-        (detailField === "password" || detailField === "general")
-          ? "Invalid password, retry"
-          : msg;
-      if (detailField === "email") {
-        setEmailError(normalizedMsg);
-      } else if (detailField === "password") {
-        setPasswordError(normalizedMsg);
-      } else {
-        setError(normalizedMsg);
-      }
+
+      setError(msg);
       setTimeout(() => errorRef.current?.focus?.(), 50);
     } finally {
       setLoading(false);
@@ -300,26 +238,16 @@ function Login({ onLogin }) {
                 <input
                   ref={emailRef}
                   value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (emailError) setEmailError("");
-                    if (error) setError("");
-                  }}
-                  onBlur={handleEmailBlur}
-                  className={`
-                    w-full pl-10 pr-4 py-3 rounded-lg
-                    bg-[#0b0f1f] border ${emailError ? "border-red-500" : "border-[#20243a]"} text-white
-                    focus:outline-none
-                    focus:ring-2 ${emailError ? "focus:ring-red-400" : "focus:ring-emerald-400"}
-                    focus:border-emerald-400
-                  `}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="
+                  w-full pl-10 pr-4 py-3 rounded-lg
+                  bg-[#0b0f1f] border border-[#20243a] text-white
+                  focus:outline-none
+                  focus:ring-2 focus:ring-emerald-400
+                  focus:border-emerald-400
+                "
                   placeholder=""
-                  autoComplete="username"
-                  maxLength={254}
                 />
-                {emailError && (
-                  <div className="text-red-400 text-xs mt-1">{emailError}</div>
-                )}
               </div>
             </div>
 
@@ -328,49 +256,19 @@ function Login({ onLogin }) {
               <label className="block text-sm font-medium mb-1">Password</label>
               <div className="relative">
                 <HiLockClosed className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-300" />
-                <div className="relative">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(e) => {
-                      setPassword(e.target.value);
-                      if (passwordError) setPasswordError("");
-                      if (error) setError("");
-                    }}
-                    onBlur={handlePasswordBlur}
-                    className={`
-                      w-full pl-10 pr-10 py-3 rounded-lg
-                      bg-[#0b0f1f] border ${passwordError ? "border-red-500" : "border-[#20243a]"} text-white
-                      focus:outline-none
-                      focus:ring-2 ${passwordError ? "focus:ring-red-400" : "focus:ring-emerald-400"}
-                      focus:border-emerald-400
-                    `}
-                    placeholder="Enter password"
-                    autoComplete="current-password"
-                    maxLength={128}
-                  />
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-lg"
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                    onClick={() => setShowPassword((v) => !v)}
-                    style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
-                  >
-                    {showPassword ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18M9.88 9.88A3 3 0 0012 15a3 3 0 002.12-5.12M15 12a3 3 0 11-6 0 3 3 0 016 0zm6.36 2.64A9.77 9.77 0 0021 12c-1.73-4-5.33-7-9-7-1.13 0-2.22.18-3.24.5m-4.11 2.11A9.77 9.77 0 003 12c1.73 4 5.33 7 9 7 1.13 0 2.22-.18 3.24-.5m4.11-2.11L3 3" />
-                      </svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0zm6.36 2.64A9.77 9.77 0 0021 12c-1.73-4-5.33-7-9-7-3.67 0-7.27 3-9 7a9.77 9.77 0 001.64 2.64m16.72 0A9.77 9.77 0 0121 12c-1.73-4-5.33-7-9-7-3.67 0-7.27 3-9 7a9.77 9.77 0 001.64 2.64" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-                {passwordError && (
-                  <div className="text-red-400 text-xs mt-1">{passwordError}</div>
-                )}
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="
+                  w-full pl-10 pr-4 py-3 rounded-lg
+                  bg-[#0b0f1f] border border-[#20243a] text-white
+                  focus:outline-none
+                  focus:ring-2 focus:ring-emerald-400
+                  focus:border-emerald-400
+                "
+                  placeholder="Enter password"
+                />
               </div>
             </div>
 
@@ -388,14 +286,14 @@ function Login({ onLogin }) {
             {/* BUTTON */}
             <button
               type="submit"
-              disabled={loading || !!emailError || !!passwordError || !email || !password}
+              disabled={loading}
               className="
-                w-full flex items-center justify-center gap-2
-                bg-purple-600
-                text-white py-3 rounded-lg font-semibold
-                hover:bg-purple-700 transition
-                disabled:opacity-60
-              "
+              w-full flex items-center justify-center gap-2
+              bg-purple-600
+              text-white py-3 rounded-lg font-semibold
+              hover:bg-purple-700 transition
+              disabled:opacity-60
+            "
             >
               {loading ? "Signing in..." : "Login"}
               {!loading && <HiArrowRight />}

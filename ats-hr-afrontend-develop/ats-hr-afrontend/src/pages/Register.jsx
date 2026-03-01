@@ -77,24 +77,25 @@ export default function Register() {
       return;
     }
 
-    const safeEmail = email.trim().toLowerCase();
-    const derivedUsername = safeEmail.split("@")[0]?.replace(/[^a-z0-9_.-]/g, "") || "candidate";
     const payload = {
-      username: derivedUsername,
       full_name: username.trim(),
-      email: safeEmail,
+      email: email.trim(),
+      phone: verificationMethod === "phone" ? phone.trim() : null,
       password,
-      role: "candidate",
+      confirm_password: confirmPassword,
+      verification_method: verificationMethod, // email or phone
     };
 
     try {
       setLoading(true);
 
-      await api.post("/auth/register", payload);
-      setStep("success");
-      setTimeout(() => {
-        navigate("/login");
-      }, 1200);
+      const resp = await api.post("/auth/candidate/register", payload);
+
+      // Backend returns user_id and sends OTP
+      const returnedUserId = resp?.data?.user_id || resp?.data?.id;
+      setUserId(returnedUserId);
+      setStep("otp");
+      setError("");
     } catch (err) {
       console.error("Register error:", err);
 
