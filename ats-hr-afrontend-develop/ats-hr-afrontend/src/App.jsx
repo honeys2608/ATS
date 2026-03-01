@@ -1,4 +1,4 @@
-﻿import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   BrowserRouter as Router,
   Routes,
@@ -203,6 +203,28 @@ function App() {
 
   const [authRole, setAuthRole] = useState(localStorage.getItem("role"));
 
+  useEffect(() => {
+    const navEntries =
+      typeof window !== "undefined" &&
+      typeof window.performance !== "undefined" &&
+      typeof window.performance.getEntriesByType === "function"
+        ? window.performance.getEntriesByType("navigation")
+        : [];
+    const isReload = navEntries?.[0]?.type === "reload";
+    if (!isReload) return;
+
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("token");
+    localStorage.removeItem("role");
+    localStorage.removeItem("user");
+    setIsAuthenticated(false);
+    setAuthRole(null);
+
+    if (window.location.pathname !== "/login") {
+      window.location.assign("/login");
+    }
+  }, []);
+
   const handleLogin = () => {
     setIsAuthenticated(true);
     setAuthRole(localStorage.getItem("role"));
@@ -210,11 +232,13 @@ function App() {
 
   const handleLogout = () => {
     localStorage.removeItem("access_token");
+    localStorage.removeItem("token");
     localStorage.removeItem("role");
     localStorage.removeItem("user");
 
     setIsAuthenticated(false);
     setAuthRole(null);
+    window.location.assign("/login");
   };
 
   // PUBLIC (NOT LOGGED IN)
